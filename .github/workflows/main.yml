@@ -165,7 +165,7 @@ jobs:
           XCF_EOF
           mv "$APP_DIR/data.pck" "$APP_DIR/godot.pck"
 
-      - name: Fill template placeholders (skip .pbxproj)
+      - name: Fill template placeholders
         run: |
           python3 << 'PYEOF'
           import os, re, pathlib
@@ -218,8 +218,7 @@ jobs:
               ("$name", "Godot Editor"),
           ]
 
-          # Do NOT touch .pbxproj – leave it for xcodebuild overrides
-          EXTS = {".plist", ".xcscheme", ".storyboard", ".strings",
+          EXTS = {".pbxproj", ".xcscheme", ".plist", ".storyboard", ".strings",
                   ".swift", ".cpp", ".h", ".entitlements", ".xcworkspacedata"}
 
           changed = 0
@@ -235,7 +234,10 @@ jobs:
                   changed += 1
           print("placeholder-processed files:", changed)
 
-          # No folder renames – keep godot_apple_embedded as is
+          # $binary -> godot : file/dir renames
+          os.rename(f"{APP}/godot_apple_embedded", f"{APP}/godot")
+          os.rename(f"{APP}/godot/godot_apple_embedded-Info.plist", f"{APP}/godot/godot-Info.plist")
+          os.rename(f"{APP}/godot/godot_apple_embedded.entitlements", f"{APP}/godot/godot.entitlements")
 
           left = []
           for p in pathlib.Path(APP).rglob("*"):
@@ -249,7 +251,7 @@ jobs:
       - name: Set editor launch arguments (Info.plist)
         run: |
           set -e
-          PLIST="$APP_DIR/godot_apple_embedded/godot_apple_embedded-Info.plist"
+          PLIST="$APP_DIR/godot/godot-Info.plist"
           /usr/libexec/PlistBuddy -c "Add :godot_editor_bootstrap_project string demo_project" "$PLIST"
           /usr/libexec/PlistBuddy -c "Add :godot_cmdline array" "$PLIST"
           /usr/libexec/PlistBuddy -c "Add :godot_cmdline:0 string --editor" "$PLIST"
@@ -295,7 +297,7 @@ jobs:
           import os, json
           from PIL import Image, ImageDraw
 
-          base = "ios_app/godot_apple_embedded/Images.xcassets/AppIcon.appiconset"
+          base = "ios_app/godot/Images.xcassets/AppIcon.appiconset"
           os.makedirs(base, exist_ok=True)
 
           img = Image.new("RGB", (1024, 1024), (71, 140, 191))   # Godot blue
@@ -312,7 +314,7 @@ jobs:
           print("AppIcon.appiconset ready")
           PYEOF
 
-      - name: Build .app with Xcode (unsigned, override settings)
+      - name: Build .app with Xcode (unsigned)
         run: |
           set -e
           xcodebuild \
@@ -330,8 +332,6 @@ jobs:
             PROVISIONING_PROFILE_SPECIFIER="" \
             VALIDATE_PRODUCT=NO \
             ONLY_ACTIVE_ARCH=YES \
-            PRODUCT_NAME=godot \
-            IPHONEOS_DEPLOYMENT_TARGET=15.0 \
             build
           ls -lh "$APP_DIR/dd/Build/Products/Release-iphoneos/"
 
