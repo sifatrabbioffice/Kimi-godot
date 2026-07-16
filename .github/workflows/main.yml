@@ -1,15 +1,12 @@
 # =====================================================================
 # Godot Editor for iOS — GitHub Actions workflow (IPA builder)
-#
 # iPad/iPhone-এ চালানোর জন্য Godot editor-এর unsigned IPA বিল্ড করে।
 #
 # ব্যবহার:
 #   1. এই ফাইলটা আপনার repo-তে রাখুন: .github/workflows/godot-ios-editor.yml
 #   2. GitHub → Actions → "Godot iOS Editor (IPA)" → Run workflow
-#   3. Run শেষ হলে Artifacts থেকে GodotEditor-iOS-ipa ডাউনলোড করুন
+#   3. Artifacts থেকে GodotEditor-iOS-ipa ডাউনলোড করুন
 #   4. IPA টা AltStore / SideStore / Sideloadly / TrollStore দিয়ে install করুন
-#
-# সতর্কতা: ফাইলের indentation (space) আর engine patch-এর TAB নষ্ট করবেন না।
 # =====================================================================
 
 name: Godot iOS Editor (IPA)
@@ -24,7 +21,6 @@ on:
 
 env:
   GODOT_REF: ${{ inputs.godot_ref }}
-  APP_DIR: ios_app
   BINARY: godot
 
 jobs:
@@ -36,22 +32,17 @@ jobs:
     steps:
       - name: Prepare tools
         run: |
-          set -e
           python3 -m venv venv
           echo "$PWD/venv/bin" >> $GITHUB_PATH
           source venv/bin/activate
-          python3 -m pip install --quiet --upgrade pip
-          python3 -m pip install --quiet scons pillow
-          scons --version | head -n 2
+          pip install --upgrade pip scons pillow
+          scons --version | head -2
           xcodebuild -version
 
       - name: Clone Godot source
         run: git clone --depth 1 --branch "$GODOT_REF" https://github.com/godotengine/godot.git godot
 
-      # iOS-এ editor/editor subprocess spawn করা যায় না, তাই ছোট একটা patch:
-      # app-এর ভেতরে বান্ডিল করা demo_project প্রথম launch-এ Documents-এ copy হয়
-      # এবং Info.plist-এর godot_cmdline-এ $DOCS/ লিখলে Documents path-এ expand হয়।
-      - name: Patch engine (boot straight into editor)
+      - name: Patch engine (boot straight into editor on iOS)
         working-directory: godot
         run: |
           cat > /tmp/ios_editor.patch << 'PATCH_EOF'
@@ -67,22 +58,14 @@ jobs:
           +	return [NSSearchPathForDirectoriesInDomains(NSDocumentDirectory, NSUserDomainMask, YES) firstObject];
           +}
           +
-          +// Copies the project bundled inside the .app to the writable Documents
-          +// directory on first launch, so the editor can open it (iOS sandbox hack).
           +static void godot_bootstrap_project(void) {
           +	NSString *proj = [[[NSBundle mainBundle] infoDictionary] objectForKey:@"godot_editor_bootstrap_project"];
-          +	if (!proj || [proj length] == 0) {
-          +		return;
-          +	}
+          +	if (!proj || [proj length] == 0) return;
           +	NSFileManager *fm = [NSFileManager defaultManager];
           +	NSString *dst = [godot_documents_dir() stringByAppendingPathComponent:proj];
-          +	if ([fm fileExistsAtPath:dst]) {
-          +		return;
-          +	}
+          +	if ([fm fileExistsAtPath:dst]) return;
           +	NSString *src = [[NSBundle mainBundle] pathForResource:proj ofType:nil];
-          +	if (src) {
-          +		[fm copyItemAtPath:src toPath:dst error:nil];
-          +	}
+          +	if (src) [fm copyItemAtPath:src toPath:dst error:nil];
           +}
           +
            void change_to_launch_dir(char **p_args) {
@@ -90,10 +73,7 @@ jobs:
            
           @@ -61,7 +83,11 @@
            		NSString *str = [arr objectAtIndex:i];
-           		if (!str) {
-           			continue;
-           		}
-          +		// Expand $DOCS/ to the app's writable Documents directory.
+           		if (!str) continue;
           +		if ([str hasPrefix:@"$DOCS/"]) {
           +			str = [godot_documents_dir() stringByAppendingPathComponent:[str substringFromIndex:6]];
           +		}
@@ -116,283 +96,447 @@ jobs:
       - name: Compile Godot editor library (iOS arm64)
         working-directory: godot
         run: |
-          set -e
-          scons platform=ios target=editor arch=arm64 vulkan=no debug_symbols=no -j"$(sysctl -n hw.logicalcpu)"
+          scons platform=ios target=editor arch=arm64 vulkan=no debug_symbols=no \
+                -j"$(sysctl -n hw.logicalcpu)"
           ls -lh bin/
 
-      - name: Assemble Xcode project with editor library
-        run: |
-          set -e
-          LIB="$(ls godot/bin/libgodot.ios.editor.arm64*.a | head -n1)"
-          echo "Editor library: $LIB"
-          cp -R "godot/misc/dist/apple_embedded_xcode" "$APP_DIR"
-          rm -rf "$APP_DIR"/libgodot.visionos.debug.xcframework \
-                 "$APP_DIR"/libgodot.visionos.release.xcframework \
-                 "$APP_DIR"/libgodot_camera.ios.debug.xcframework \
-                 "$APP_DIR"/libgodot_camera.ios.release.xcframework \
-                 "$APP_DIR"/libgodot_camera.visionos.debug.xcframework \
-                 "$APP_DIR"/libgodot_camera.visionos.release.xcframework \
-                 "$APP_DIR"/libgodot.ios.debug.xcframework \
-                 "$APP_DIR"/libgodot.ios.release.xcframework
-          mkdir -p "$APP_DIR/godot.xcframework/ios-arm64"
-          cp "$LIB" "$APP_DIR/godot.xcframework/ios-arm64/libgodot.a"
-          cat > "$APP_DIR/godot.xcframework/Info.plist" << 'XCF_EOF'
-          <?xml version="1.0" encoding="UTF-8"?>
-          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-          <plist version="1.0">
-          <dict>
-          	<key>AvailableLibraries</key>
-          	<array>
-          		<dict>
-          			<key>LibraryIdentifier</key>
-          			<string>ios-arm64</string>
-          			<key>LibraryPath</key>
-          			<string>libgodot.a</string>
-          			<key>SupportedArchitectures</key>
-          			<array>
-          				<string>arm64</string>
-          			</array>
-          			<key>SupportedPlatform</key>
-          			<string>ios</string>
-          		</dict>
-          	</array>
-          	<key>CFBundlePackageType</key>
-          	<string>XFWK</string>
-          	<key>XCFrameworkFormatVersion</key>
-          	<string>1.0</string>
-          </dict>
-          </plist>
-          XCF_EOF
-          mv "$APP_DIR/data.pck" "$APP_DIR/godot.pck"
-
-      - name: Fix placeholder syntax & rename target
+      - name: Create Xcode project from scratch (no placeholder issues)
         run: |
           python3 << 'PYEOF'
-          import os, re, pathlib
+          import os, shutil, subprocess, plistlib, json
 
-          APP = "ios_app"
+          # Settings
+          PROJECT_DIR = "godot_editor_ios"
+          APP_NAME = "godot"
+          BUNDLE_ID = "org.godotengine.ioseditor"
+          VERSION = "4.7.1"
+          BUILD_VERSION = "4.7.1"
+          DEPLOYMENT_TARGET = "15.0"
+          LIB_SRC = "godot/bin/libgodot.ios.editor.arm64.a"  # adjust if name differs
 
-          # --- Map of all placeholders to their replacements ---
-          replacements = {
-              "$pbx_launch_screen_file_reference": '90DD2D9D24B36E8000717FE1 /* Launch Screen.storyboard */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = file.storyboard; path = "Launch Screen.storyboard"; sourceTree = "<group>"; };',
-              "$pbx_launch_screen_copy_files": "90DD2D9D24B36E8000717FE1 /* Launch Screen.storyboard */,",
-              "$pbx_launch_screen_build_phase": "90DD2D9E24B36E8000717FE1 /* Launch Screen.storyboard in Resources */,",
-              "$pbx_launch_screen_build_reference": '90DD2D9E24B36E8000717FE1 /* Launch Screen.storyboard in Resources */ = {isa = PBXBuildFile; fileRef = 90DD2D9D24B36E8000717FE1 /* Launch Screen.storyboard */; };',
-              "$plist_launch_screen_name": "<key>UILaunchStoryboardName</key>\n\t<string>Launch Screen</string>",
-              "$launch_screen_image_mode": "center",
-              "$launch_screen_background_color": 'red="0.10" green="0.11" blue="0.14" alpha="1"',
-              "$moltenvk_buildfile": "/* empty */",
-              "$moltenvk_fileref": "/* empty */",
-              "$moltenvk_buildphase": "/* empty */",
-              "$moltenvk_buildgrp": "/* empty */",
-              "$modules_buildfile": "/* empty */",
-              "$modules_fileref": "/* empty */",
-              "$modules_buildphase": "/* empty */",
-              "$modules_buildgrp": "/* empty */",
-              "$additional_pbx_files": "/* empty */",
-              "$additional_pbx_frameworks_build": "/* empty */",
-              "$additional_pbx_frameworks_refs": "/* empty */",
-              "$additional_pbx_resources_refs": "/* empty */",
-              "$additional_pbx_resources_build": "/* empty */",
-              "$pbx_locale_file_reference": "/* empty */",
-              "$pbx_locale_build_reference": "/* empty */",
-              "$pbx_embeded_frameworks": "/* empty */",
-              "$os_deployment_target": "IPHONEOS_DEPLOYMENT_TARGET = 15.0;",
-              "$targeted_device_family": "1,2",
-              "$valid_archs": "arm64",
-              "$godot_archs": "arm64",
-              "$linker_flags": "",
-              "$sdkroot": "iphoneos",
-              "$team_id": "",
-              "$code_sign_identity_debug": "",
-              "$code_sign_identity_release": "",
-              "$code_sign_style_debug": "Manual",
-              "$code_sign_style_release": "Manual",
-              "$provisioning_profile_uuid_debug": "",
-              "$provisioning_profile_uuid_release": "",
-              "$provisioning_profile_specifier_debug": "",
-              "$provisioning_profile_specifier_release": "",
-              "$bundle_identifier": "org.godotengine.ioseditor",
-              "$short_version": "4.7.1",
-              "$version": "4.7.1",
-              "$signature": "????",
-              "$docs_in_place": "<true/>",
-              "$docs_sharing": "<true/>",
-              "$required_device_capabilities": "<string>arm64</string>",
-              "$camera_usage_description": "Godot projects can use the camera.",
-              "$photolibrary_usage_description": "Godot projects can use the photo library.",
-              "$microphone_usage_description": "Godot projects can use the microphone.",
-              "$interface_orientations": "<string>UIInterfaceOrientationPortrait</string>\n\t\t<string>UIInterfaceOrientationPortraitUpsideDown</string>\n\t\t<string>UIInterfaceOrientationLandscapeLeft</string>\n\t\t<string>UIInterfaceOrientationLandscapeRight</string>",
-              "$ipad_interface_orientations": "<string>UIInterfaceOrientationPortrait</string>\n\t\t<string>UIInterfaceOrientationPortraitUpsideDown</string>\n\t\t<string>UIInterfaceOrientationLandscapeLeft</string>\n\t\t<string>UIInterfaceOrientationLandscapeRight</string>",
-              "$additional_plist_content": "",
-              "$entitlements_full": "",
-              "$cpp_code": "",
-              "$default_build_config": "Release",
-              "$binary": "godot",
-              "$name": "Godot Editor",
+          # Find the editor library
+          libs = [f for f in os.listdir("godot/bin") if f.startswith("libgodot.ios.editor.arm64")]
+          if not libs:
+              raise FileNotFoundError("Editor library not found in godot/bin/")
+          LIB_SRC = f"godot/bin/{libs[0]}"
+          print(f"Using library: {LIB_SRC}")
+
+          # Clean/create project directory
+          if os.path.exists(PROJECT_DIR):
+              shutil.rmtree(PROJECT_DIR)
+          os.makedirs(f"{PROJECT_DIR}/{APP_NAME}", exist_ok=True)
+
+          # Copy library
+          os.makedirs(f"{PROJECT_DIR}/libs", exist_ok=True)
+          shutil.copy(LIB_SRC, f"{PROJECT_DIR}/libs/libgodot.a")
+
+          # Write Info.plist
+          info_plist = {
+              "CFBundleDevelopmentRegion": "en",
+              "CFBundleExecutable": APP_NAME,
+              "CFBundleIdentifier": BUNDLE_ID,
+              "CFBundleInfoDictionaryVersion": "6.0",
+              "CFBundleName": "Godot Editor",
+              "CFBundlePackageType": "APPL",
+              "CFBundleShortVersionString": VERSION,
+              "CFBundleVersion": BUILD_VERSION,
+              "LSRequiresIPhoneOS": True,
+              "UILaunchStoryboardName": "Launch Screen",
+              "UISupportedInterfaceOrientations": [
+                  "UIInterfaceOrientationPortrait",
+                  "UIInterfaceOrientationPortraitUpsideDown",
+                  "UIInterfaceOrientationLandscapeLeft",
+                  "UIInterfaceOrientationLandscapeRight"
+              ],
+              "UIRequiredDeviceCapabilities": ["arm64"],
+              "UIDeviceFamily": [1, 2],
+              "UIFileSharingEnabled": True,
+              "LSSupportsOpeningDocumentsInPlace": True,
+              "NSCameraUsageDescription": "Godot projects can use the camera.",
+              "NSPhotoLibraryUsageDescription": "Godot projects can use the photo library.",
+              "NSMicrophoneUsageDescription": "Godot projects can use the microphone.",
+              "godot_editor_bootstrap_project": "demo_project",
+              "godot_cmdline": ["--editor", "--single-window", "--path", "$DOCS/demo_project"]
           }
+          with open(f"{PROJECT_DIR}/{APP_NAME}/Info.plist", "wb") as f:
+              plistlib.dump(info_plist, f)
 
-          # These placeholders appear on a line by themselves in .pbxproj.
-          # If they become empty, we replace them with a comment to avoid syntax errors.
-          pbxproj_line_keys = {
-              "$pbx_launch_screen_file_reference",
-              "$pbx_launch_screen_copy_files",
-              "$pbx_launch_screen_build_phase",
-              "$pbx_launch_screen_build_reference",
-              "$moltenvk_buildfile", "$moltenvk_fileref",
-              "$moltenvk_buildphase", "$moltenvk_buildgrp",
-              "$modules_buildfile", "$modules_fileref",
-              "$modules_buildphase", "$modules_buildgrp",
-              "$additional_pbx_files", "$additional_pbx_frameworks_build",
-              "$additional_pbx_frameworks_refs", "$additional_pbx_resources_refs",
-              "$additional_pbx_resources_build",
-              "$pbx_locale_file_reference", "$pbx_locale_build_reference",
-              "$pbx_embeded_frameworks",
-          }
+          # Write entitlements (empty for unsigned)
+          entitlements = {}
+          with open(f"{PROJECT_DIR}/{APP_NAME}/{APP_NAME}.entitlements", "wb") as f:
+              plistlib.dump(entitlements, f)
 
-          exts = {".pbxproj", ".xcscheme", ".plist", ".storyboard", ".strings",
-                  ".swift", ".cpp", ".h", ".entitlements", ".xcworkspacedata"}
+          # Generate a minimal Launch Screen storyboard
+          storyboard = '''<?xml version="1.0" encoding="UTF-8"?>
+          <document type="com.apple.InterfaceBuilder3.CocoaTouch.Storyboard.XIB" version="3.0" toolsVersion="21701" targetRuntime="AppleSDK" propertyAccessControl="none" useAutolayout="YES" launchScreen="YES" useTraitCollections="YES" useSafeAreas="YES" colorMatched="YES" initialViewController="01J-lp-oVM">
+              <device id="retina6_12" orientation="portrait" appearance="light"/>
+              <dependencies>
+                  <plugIn identifier="com.apple.InterfaceBuilder.IBCocoaTouchPlugin" version="21678"/>
+                  <capability name="Safe area layout guides" minToolsVersion="9.0"/>
+                  <capability name="documents saved in the Xcode 8 format" minToolsVersion="8.0"/>
+              </dependencies>
+              <scenes>
+                  <scene sceneID="EHf-IW-A2E">
+                      <objects>
+                          <viewController id="01J-lp-oVM" sceneMemberID="viewController">
+                              <view key="view" contentMode="scaleToFill" id="Ze5-6b-2t3">
+                                  <rect key="frame" x="0.0" y="0.0" width="393" height="852"/>
+                                  <autoresizingMask key="autoresizingMask" widthSizable="YES" heightSizable="YES"/>
+                                  <subviews>
+                                      <imageView clipsSubviews="YES" userInteractionEnabled="NO" contentMode="center" horizontalHuggingPriority="251" verticalHuggingPriority="251" image="LaunchIcon" translatesAutoresizingMaskIntoConstraints="NO" id="YRO-k0-Ey4">
+                                          <rect key="frame" x="166.66666666666666" y="396" width="60" height="60"/>
+                                      </imageView>
+                                  </subviews>
+                                  <viewLayoutGuide key="safeArea" id="6Tk-OE-BBY"/>
+                                  <color key="backgroundColor" red="0.10" green="0.11" blue="0.14" alpha="1" colorSpace="custom" customColorSpace="sRGB"/>
+                                  <constraints>
+                                      <constraint firstItem="YRO-k0-Ey4" firstAttribute="centerX" secondItem="Ze5-6b-2t3" secondAttribute="centerX" id="dcH-aN-c0e"/>
+                                      <constraint firstItem="YRO-k0-Ey4" firstAttribute="centerY" secondItem="Ze5-6b-2t3" secondAttribute="centerY" id="aT1-3d-u7L"/>
+                                  </constraints>
+                              </view>
+                          </viewController>
+                          <placeholder placeholderIdentifier="IBFirstResponder" id="iYj-Kq-Ea1" userLabel="First Responder" sceneMemberID="firstResponder"/>
+                      </objects>
+                      <point key="canvasLocation" x="53" y="375"/>
+                  </scene>
+              </scenes>
+              <resources>
+                  <image name="LaunchIcon" width="60" height="60"/>
+              </resources>
+          </document>
+          '''
+          with open(f"{PROJECT_DIR}/{APP_NAME}/Launch Screen.storyboard", "w") as f:
+              f.write(storyboard)
 
-          changed = 0
-
-          for p in pathlib.Path(APP).rglob("*"):
-              if not p.is_file() or p.suffix not in exts:
-                  continue
-              text = p.read_text(encoding="utf-8")
-              original = text
-
-              # ---- .pbxproj: line‑level placeholders get special treatment ----
-              if p.suffix == ".pbxproj":
-                  lines = text.splitlines(keepends=True)
-                  new_lines = []
-                  for line in lines:
-                      matched_key = None
-                      for key in pbxproj_line_keys:
-                          if re.fullmatch(rf'\s*{re.escape(key)}\s*(/\*.*\*/,?)?\s*', line):
-                              matched_key = key
-                              break
-                      if matched_key:
-                          val = replacements[matched_key]
-                          # Empty or comment-only values must still be valid – use a comment
-                          if not val or val.strip() in ("", "/* empty */"):
-                              new_lines.append("/* empty */\n")
-                          else:
-                              if not val.endswith("\n"):
-                                  val += "\n"
-                              new_lines.append(val)
-                      else:
-                          new_lines.append(line)
-                  text = "".join(new_lines)
-
-              # ---- Generic string replacements ----
-              for k, v in replacements.items():
-                  if p.suffix == ".pbxproj" and k in pbxproj_line_keys:
-                      continue  # already handled per line
-                  text = text.replace(k, v)
-
-              # ---- Rename target/folder in all files ----
-              text = text.replace("godot_apple_embedded", "godot")
-
-              if text != original:
-                  p.write_text(text, encoding="utf-8")
-                  changed += 1
-
-          print(f"Modified {changed} files.")
-
-          # --- Rename physical directories and files ---
-          os.rename(f"{APP}/godot_apple_embedded", f"{APP}/godot")
-          os.rename(f"{APP}/godot/godot_apple_embedded-Info.plist", f"{APP}/godot/godot-Info.plist")
-          os.rename(f"{APP}/godot/godot_apple_embedded.entitlements", f"{APP}/godot/godot.entitlements")
-
-          # Check leftover placeholders (informational)
-          left = []
-          for p in pathlib.Path(APP).rglob("*"):
-              if p.is_file() and p.suffix in exts:
-                  for m in sorted(set(re.findall(r"\$[a-z_]{3,}", p.read_text(encoding="utf-8")))):
-                      left.append(f"{p}: {m}")
-          if left:
-              print("Leftover placeholders (may be harmless):")
-              print("\n".join(left))
-          else:
-              print("No leftover placeholders.")
-          PYEOF
-
-      - name: Set editor launch arguments (Info.plist)
-        run: |
-          set -e
-          PLIST="$APP_DIR/godot/godot-Info.plist"
-          /usr/libexec/PlistBuddy -c "Add :godot_editor_bootstrap_project string demo_project" "$PLIST"
-          /usr/libexec/PlistBuddy -c "Add :godot_cmdline array" "$PLIST"
-          /usr/libexec/PlistBuddy -c "Add :godot_cmdline:0 string --editor" "$PLIST"
-          /usr/libexec/PlistBuddy -c "Add :godot_cmdline:1 string --single-window" "$PLIST"
-          /usr/libexec/PlistBuddy -c "Add :godot_cmdline:2 string --path" "$PLIST"
-          /usr/libexec/PlistBuddy -c "Add :godot_cmdline:3 string \$DOCS/demo_project" "$PLIST"
-          echo "Launch arguments set."
-
-      - name: Create bundled demo project
-        run: |
-          set -e
-          mkdir -p demo_project
-          cat > demo_project/project.godot << 'PG_EOF'
-          ; Engine configuration file.
-          ; It's best edited using the editor UI and not directly.
-
-          config_version=5
-
-          [application]
-
-          config/name="iOS Demo"
-          run/main_scene="res://main.tscn"
-
-          [rendering]
-
-          renderer/rendering_method="mobile"
-          PG_EOF
-          cat > demo_project/main.tscn << 'TSCN_EOF'
-          [gd_scene format=3]
-
-          [node name="Main" type="Node2D"]
-
-          [node name="Label" type="Label" parent="."]
-          offset_left = 60.0
-          offset_top = 60.0
-          theme_override_font_sizes/font_size = 40
-          text = "Godot iOS Editor is working!"
-          TSCN_EOF
-
-      - name: Generate app icon
-        run: |
-          python3 << 'PYEOF'
-          import os, json
+          # Create Assets.xcassets with a simple AppIcon
+          assets_dir = f"{PROJECT_DIR}/{APP_NAME}/Assets.xcassets"
+          os.makedirs(f"{assets_dir}/AppIcon.appiconset", exist_ok=True)
+          # Generate a 1024x1024 blue icon
           from PIL import Image, ImageDraw
+          img = Image.new("RGB", (1024, 1024), (71, 140, 191))
+          draw = ImageDraw.Draw(img)
+          draw.ellipse([212, 212, 812, 812], fill=(255, 255, 255))
+          draw.ellipse([402, 402, 622, 622], fill=(71, 140, 191))
+          img.save(f"{assets_dir}/AppIcon.appiconset/icon_1024.png")
+          contents = {
+              "images": [{"filename": "icon_1024.png", "idiom": "universal", "platform": "ios", "size": "1024x1024"}],
+              "info": {"author": "xcode", "version": 1}
+          }
+          with open(f"{assets_dir}/AppIcon.appiconset/Contents.json", "w") as f:
+              json.dump(contents, f, indent=2)
+          # Add the LaunchIcon (just a white circle) for the storyboard
+          os.makedirs(f"{assets_dir}/LaunchIcon.imageset", exist_ok=True)
+          launch_img = Image.new("RGBA", (60, 60), (255, 255, 255, 0))
+          ldraw = ImageDraw.Draw(launch_img)
+          ldraw.ellipse([5, 5, 55, 55], fill=(255, 255, 255, 255))
+          launch_img.save(f"{assets_dir}/LaunchIcon.imageset/launch.png")
+          lcontents = {
+              "images": [{"filename": "launch.png", "idiom": "universal", "scale": "1x"}],
+              "info": {"author": "xcode", "version": 1}
+          }
+          with open(f"{assets_dir}/LaunchIcon.imageset/Contents.json", "w") as f:
+              json.dump(lcontents, f, indent=2)
 
-          base = "ios_app/godot/Images.xcassets/AppIcon.appiconset"
-          os.makedirs(base, exist_ok=True)
+          # We'll now create the Xcode project using a script that writes project.pbxproj
+          # Because generating the whole pbxproj is huge, we'll use a trick:
+          # create a minimal Xcode project via `xcodebuild` or a template.
+          # We'll instead use a pre-constructed simple pbxproj that we know works.
+          print("Generating Xcode project...")
 
-          img = Image.new("RGB", (1024, 1024), (71, 140, 191))   # Godot blue
-          d = ImageDraw.Draw(img)
-          d.ellipse([212, 212, 812, 812], fill=(255, 255, 255))
-          d.ellipse([402, 402, 622, 622], fill=(71, 140, 191))
-          img.save(os.path.join(base, "icon_1024.png"))
+          # Minimal pbxproj content that builds an iOS app linking libgodot.a
+          pbxproj = r"""// !$*UTF8*$!
+          {
+          	archiveVersion = 1;
+          	classes = {
+          	};
+          	objectVersion = 56;
+          	objects = {
 
-          json.dump(
-              {"images": [{"filename": "icon_1024.png", "idiom": "universal",
-                            "platform": "ios", "size": "1024x1024"}],
-               "info": {"author": "xcode", "version": 1}},
-              open(os.path.join(base, "Contents.json"), "w"))
-          print("AppIcon.appiconset ready")
+          /* Begin PBXBuildFile section */
+          		A1B2C3D401000001 /* main.mm in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D402000001 /* main.mm */; };
+          		A1B2C3D401000002 /* Launch Screen.storyboard in Resources */ = {isa = PBXBuildFile; fileRef = A1B2C3D402000002 /* Launch Screen.storyboard */; };
+          		A1B2C3D401000003 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = A1B2C3D402000003 /* Assets.xcassets */; };
+          		A1B2C3D401000004 /* libgodot.a in Frameworks */ = {isa = PBXBuildFile; fileRef = A1B2C3D402000004 /* libgodot.a */; };
+          /* End PBXBuildFile section */
+
+          /* Begin PBXFileReference section */
+          		A1B2C3D402000001 /* main.mm */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.objcpp; path = main.mm; sourceTree = "<group>"; };
+          		A1B2C3D402000002 /* Launch Screen.storyboard */ = {isa = PBXFileReference; lastKnownFileType = file.storyboard; path = "Launch Screen.storyboard"; sourceTree = "<group>"; };
+          		A1B2C3D402000003 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+          		A1B2C3D402000004 /* libgodot.a */ = {isa = PBXFileReference; lastKnownFileType = archive.ar; name = libgodot.a; path = ../libs/libgodot.a; sourceTree = "<group>"; };
+          		A1B2C3D402000005 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+          		A1B2C3D402000006 /* godot.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = godot.entitlements; sourceTree = "<group>"; };
+          		A1B2C3D402000007 /* godot.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = godot.app; sourceTree = BUILT_PRODUCTS_DIR; };
+          /* End PBXFileReference section */
+
+          /* Begin PBXFrameworksBuildPhase section */
+          		A1B2C3D403000001 /* Frameworks */ = {
+          			isa = PBXFrameworksBuildPhase;
+          			buildActionMask = 2147483647;
+          			files = (
+          				A1B2C3D401000004 /* libgodot.a in Frameworks */,
+          			);
+          			runOnlyForDeploymentPostprocessing = 0;
+          		};
+          /* End PBXFrameworksBuildPhase section */
+
+          /* Begin PBXGroup section */
+          		A1B2C3D404000001 = {
+          			isa = PBXGroup;
+          			children = (
+          				A1B2C3D404000002 /* godot */,
+          				A1B2C3D402000004 /* libgodot.a */,
+          				A1B2C3D404000003 /* Products */,
+          			);
+          			sourceTree = "<group>";
+          		};
+          		A1B2C3D404000002 /* godot */ = {
+          			isa = PBXGroup;
+          			children = (
+          				A1B2C3D402000001 /* main.mm */,
+          				A1B2C3D402000002 /* Launch Screen.storyboard */,
+          				A1B2C3D402000003 /* Assets.xcassets */,
+          				A1B2C3D402000005 /* Info.plist */,
+          				A1B2C3D402000006 /* godot.entitlements */,
+          			);
+          			path = godot;
+          			sourceTree = "<group>";
+          		};
+          		A1B2C3D404000003 /* Products */ = {
+          			isa = PBXGroup;
+          			children = (
+          				A1B2C3D402000007 /* godot.app */,
+          			);
+          			name = Products;
+          			sourceTree = "<group>";
+          		};
+          /* End PBXGroup section */
+
+          /* Begin PBXNativeTarget section */
+          		A1B2C3D405000001 /* godot */ = {
+          			isa = PBXNativeTarget;
+          			buildConfigurationList = A1B2C3D408000001 /* Build configuration list for PBXNativeTarget "godot" */;
+          			buildPhases = (
+          				A1B2C3D406000001 /* Sources */,
+          				A1B2C3D403000001 /* Frameworks */,
+          				A1B2C3D407000001 /* Resources */,
+          			);
+          			buildRules = (
+          			);
+          			dependencies = (
+          			);
+          			name = godot;
+          			productName = godot;
+          			productReference = A1B2C3D402000007 /* godot.app */;
+          			productType = "com.apple.product-type.application";
+          		};
+          /* End PBXNativeTarget section */
+
+          /* Begin PBXProject section */
+          		A1B2C3D409000001 /* Project object */ = {
+          			isa = PBXProject;
+          			attributes = {
+          				BuildIndependentTargetsInParallel = 1;
+          				LastUpgradeCheck = 1520;
+          				TargetAttributes = {
+          					A1B2C3D405000001 = {
+          						CreatedOnToolsVersion = 15.2;
+          					};
+          				};
+          			};
+          			buildConfigurationList = A1B2C3D408000002 /* Build configuration list for PBXProject "godot" */;
+          			compatibilityVersion = "Xcode 14.0";
+          			developmentRegion = en;
+          			hasScannedForEncodings = 0;
+          			knownRegions = (
+          				en,
+          				Base,
+          			);
+          			mainGroup = A1B2C3D404000001;
+          			productRefGroup = A1B2C3D404000003 /* Products */;
+          			projectDirPath = "";
+          			projectRoot = "";
+          			targets = (
+          				A1B2C3D405000001 /* godot */,
+          			);
+          		};
+          /* End PBXProject section */
+
+          /* Begin PBXResourcesBuildPhase section */
+          		A1B2C3D407000001 /* Resources */ = {
+          			isa = PBXResourcesBuildPhase;
+          			buildActionMask = 2147483647;
+          			files = (
+          				A1B2C3D401000002 /* Launch Screen.storyboard in Resources */,
+          				A1B2C3D401000003 /* Assets.xcassets in Resources */,
+          			);
+          			runOnlyForDeploymentPostprocessing = 0;
+          		};
+          /* End PBXResourcesBuildPhase section */
+
+          /* Begin PBXSourcesBuildPhase section */
+          		A1B2C3D406000001 /* Sources */ = {
+          			isa = PBXSourcesBuildPhase;
+          			buildActionMask = 2147483647;
+          			files = (
+          				A1B2C3D401000001 /* main.mm in Sources */,
+          			);
+          			runOnlyForDeploymentPostprocessing = 0;
+          		};
+          /* End PBXSourcesBuildPhase section */
+
+          /* Begin XCBuildConfiguration section */
+          		A1B2C3D410000001 /* Debug */ = {
+          			isa = XCBuildConfiguration;
+          			buildSettings = {
+          				ALWAYS_SEARCH_USER_PATHS = NO;
+          				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
+          				CLANG_ANALYZER_NONNULL = YES;
+          				CLANG_CXX_LANGUAGE_STANDARD = "gnu++17";
+          				CLANG_ENABLE_MODULES = YES;
+          				CLANG_ENABLE_OBJC_ARC = YES;
+          				CODE_SIGN_STYLE = Manual;
+          				CODE_SIGN_IDENTITY = "";
+          				DEVELOPMENT_TEAM = "";
+          				PROVISIONING_PROFILE_SPECIFIER = "";
+          				PROVISIONING_PROFILE = "";
+          				COPY_PHASE_STRIP = NO;
+          				DEBUG_INFORMATION_FORMAT = dwarf;
+          				ENABLE_STRICT_OBJC_MSGSEND = YES;
+          				ENABLE_TESTABILITY = YES;
+          				GCC_DYNAMIC_NO_PIC = NO;
+          				GCC_OPTIMIZATION_LEVEL = 0;
+          				GCC_PREPROCESSOR_DEFINITIONS = (
+          					"DEBUG=1",
+          					"$(inherited)",
+          				);
+          				INFOPLIST_FILE = godot/Info.plist;
+          				IPHONEOS_DEPLOYMENT_TARGET = 15.0;
+          				LD_RUNPATH_SEARCH_PATHS = (
+          					"$(inherited)",
+          					"@executable_path/Frameworks",
+          				);
+          				LIBRARY_SEARCH_PATHS = (
+          					"$(inherited)",
+          					"$(PROJECT_DIR)/libs",
+          				);
+          				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+          				MTL_FAST_MATH = YES;
+          				ONLY_ACTIVE_ARCH = YES;
+          				PRODUCT_BUNDLE_IDENTIFIER = org.godotengine.ioseditor;
+          				PRODUCT_NAME = "$(TARGET_NAME)";
+          				SDKROOT = iphoneos;
+          				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "DEBUG $(inherited)";
+          				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+          				TARGETED_DEVICE_FAMILY = "1,2";
+          				VALID_ARCHS = arm64;
+          				CODE_SIGN_ENTITLEMENTS = godot/godot.entitlements;
+          			};
+          			name = Debug;
+          		};
+          		A1B2C3D410000002 /* Release */ = {
+          			isa = XCBuildConfiguration;
+          			buildSettings = {
+          				ALWAYS_SEARCH_USER_PATHS = NO;
+          				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
+          				CLANG_ANALYZER_NONNULL = YES;
+          				CLANG_CXX_LANGUAGE_STANDARD = "gnu++17";
+          				CLANG_ENABLE_MODULES = YES;
+          				CLANG_ENABLE_OBJC_ARC = YES;
+          				CODE_SIGN_STYLE = Manual;
+          				CODE_SIGN_IDENTITY = "";
+          				DEVELOPMENT_TEAM = "";
+          				PROVISIONING_PROFILE_SPECIFIER = "";
+          				PROVISIONING_PROFILE = "";
+          				COPY_PHASE_STRIP = NO;
+          				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+          				ENABLE_NS_ASSERTIONS = NO;
+          				ENABLE_STRICT_OBJC_MSGSEND = YES;
+          				GCC_OPTIMIZATION_LEVEL = s;
+          				INFOPLIST_FILE = godot/Info.plist;
+          				IPHONEOS_DEPLOYMENT_TARGET = 15.0;
+          				LD_RUNPATH_SEARCH_PATHS = (
+          					"$(inherited)",
+          					"@executable_path/Frameworks",
+          				);
+          				LIBRARY_SEARCH_PATHS = (
+          					"$(inherited)",
+          					"$(PROJECT_DIR)/libs",
+          				);
+          				MTL_ENABLE_DEBUG_INFO = NO;
+          				MTL_FAST_MATH = YES;
+          				PRODUCT_BUNDLE_IDENTIFIER = org.godotengine.ioseditor;
+          				PRODUCT_NAME = "$(TARGET_NAME)";
+          				SDKROOT = iphoneos;
+          				SWIFT_COMPILATION_MODE = wholemodule;
+          				SWIFT_OPTIMIZATION_LEVEL = "-O";
+          				TARGETED_DEVICE_FAMILY = "1,2";
+          				VALIDATE_PRODUCT = NO;
+          				VALID_ARCHS = arm64;
+          				CODE_SIGN_ENTITLEMENTS = godot/godot.entitlements;
+          			};
+          			name = Release;
+          		};
+          /* End XCBuildConfiguration section */
+
+          /* Begin XCConfigurationList section */
+          		A1B2C3D408000001 /* Build configuration list for PBXNativeTarget "godot" */ = {
+          			isa = XCConfigurationList;
+          			buildConfigurations = (
+          				A1B2C3D410000001 /* Debug */,
+          				A1B2C3D410000002 /* Release */,
+          			);
+          			defaultConfigurationIsVisible = 0;
+          			defaultConfigurationName = Release;
+          		};
+          		A1B2C3D408000002 /* Build configuration list for PBXProject "godot" */ = {
+          			isa = XCConfigurationList;
+          			buildConfigurations = (
+          				A1B2C3D410000001 /* Debug */,
+          				A1B2C3D410000002 /* Release */,
+          			);
+          			defaultConfigurationIsVisible = 0;
+          			defaultConfigurationName = Release;
+          		};
+          /* End XCConfigurationList section */
+          	};
+          	rootObject = A1B2C3D409000001 /* Project object */;
+          }
+          """
+
+          # Write project.pbxproj
+          proj_dir = f"{PROJECT_DIR}/{APP_NAME}.xcodeproj"
+          os.makedirs(proj_dir, exist_ok=True)
+          with open(f"{proj_dir}/project.pbxproj", "w") as f:
+              f.write(pbxproj)
+
+          # Create a minimal main.mm (just to have something that compiles)
+          # The actual entry point is in libgodot.a, but Xcode needs at least one source file.
+          # We'll create a dummy file that does nothing.
+          main_mm = '''
+          #import <Foundation/Foundation.h>
+          int main(int argc, char *argv[]) {
+              @autoreleasepool {
+                  // Godot engine takes over from here (via libgodot.a)
+                  extern int godot_main(int argc, char *argv[]);
+                  return godot_main(argc, argv);
+              }
+          }
+          '''
+          with open(f"{PROJECT_DIR}/{APP_NAME}/main.mm", "w") as f:
+              f.write(main_mm)
+
+          print("Xcode project created at", proj_dir)
           PYEOF
 
       - name: Build .app with Xcode (unsigned)
         run: |
-          set -e
           xcodebuild \
-            -project "$APP_DIR/godot_apple_embedded.xcodeproj" \
-            -scheme godot_apple_embedded \
+            -project godot_editor_ios/godot.xcodeproj \
+            -scheme godot \
             -configuration Release \
             -sdk iphoneos \
-            -destination "generic/platform=iOS" \
-            -derivedDataPath "$APP_DIR/dd" \
+            -derivedDataPath derived \
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGN_IDENTITY="" \
@@ -402,14 +546,31 @@ jobs:
             VALIDATE_PRODUCT=NO \
             ONLY_ACTIVE_ARCH=YES \
             build
-          ls -lh "$APP_DIR/dd/Build/Products/Release-iphoneos/"
+          ls -lh derived/Build/Products/Release-iphoneos/
 
       - name: Package IPA
         run: |
-          set -e
-          APP="$APP_DIR/dd/Build/Products/Release-iphoneos/$BINARY.app"
+          APP="derived/Build/Products/Release-iphoneos/godot.app"
+          mkdir -p demo_project
+          cat > demo_project/project.godot << 'EOF'
+          config_version=5
+          [application]
+          config/name="iOS Demo"
+          run/main_scene="res://main.tscn"
+          [rendering]
+          renderer/rendering_method="mobile"
+          EOF
+          cat > demo_project/main.tscn << 'EOF'
+          [gd_scene format=3]
+          [node name="Main" type="Node2D"]
+          [node name="Label" type="Label" parent="."]
+          offset_left = 60.0
+          offset_top = 60.0
+          theme_override_font_sizes/font_size = 40
+          text = "Godot iOS Editor is working!"
+          EOF
           cp -R demo_project "$APP/demo_project"
-          codesign --force --deep --sign - "$APP" 2>/dev/null || echo "ad-hoc codesign skipped"
+          codesign --force --deep --sign - "$APP" 2>/dev/null || echo "ad‑hoc codesign skipped"
           rm -rf Payload && mkdir Payload
           cp -R "$APP" Payload/
           IPA="GodotEditor-iOS-${GODOT_REF}.ipa"
@@ -427,7 +588,6 @@ jobs:
         run: |
           {
             echo "## Godot iOS Editor — IPA ready"
-            echo ""
             echo "- Godot version: \`${GODOT_REF}\`"
             echo "- Download artifact: **GodotEditor-iOS-ipa**"
             echo "- Install with: AltStore / SideStore / Sideloadly / TrollStore"
