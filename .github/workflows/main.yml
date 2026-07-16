@@ -165,60 +165,75 @@ jobs:
           XCF_EOF
           mv "$APP_DIR/data.pck" "$APP_DIR/godot.pck"
 
-      - name: Fill template placeholders and fix project
+      - name: Fix placeholder syntax & rename target
         run: |
           python3 << 'PYEOF'
           import os, re, pathlib
 
           APP = "ios_app"
 
-          # -------------------- replacement map ---------------------------------
-          replacements = [
-              ("$pbx_launch_screen_file_reference", '90DD2D9D24B36E8000717FE1 /* Launch Screen.storyboard */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = file.storyboard; path = "Launch Screen.storyboard"; sourceTree = "<group>"; };'),
-              ("$pbx_launch_screen_copy_files", "90DD2D9D24B36E8000717FE1 /* Launch Screen.storyboard */,"),
-              ("$pbx_launch_screen_build_phase", "90DD2D9E24B36E8000717FE1 /* Launch Screen.storyboard in Resources */,"),
-              ("$pbx_launch_screen_build_reference", "90DD2D9E24B36E8000717FE1 /* Launch Screen.storyboard in Resources */ = {isa = PBXBuildFile; fileRef = 90DD2D9D24B36E8000717FE1 /* Launch Screen.storyboard */; };"),
-              ("$plist_launch_screen_name", "<key>UILaunchStoryboardName</key>\n\t<string>Launch Screen</string>"),
-              ("$launch_screen_image_mode", "center"),
-              ("$launch_screen_background_color", 'red="0.10" green="0.11" blue="0.14" alpha="1"'),
-              ("$moltenvk_buildfile", ""), ("$moltenvk_fileref", ""),
-              ("$moltenvk_buildphase", ""), ("$moltenvk_buildgrp", ""),
-              ("$modules_buildfile", ""), ("$modules_fileref", ""),
-              ("$modules_buildphase", ""), ("$modules_buildgrp", ""),
-              ("$additional_pbx_files", ""), ("$additional_pbx_frameworks_build", ""),
-              ("$additional_pbx_frameworks_refs", ""), ("$additional_pbx_resources_refs", ""),
-              ("$additional_pbx_resources_build", ""),
-              ("$pbx_locale_file_reference", ""), ("$pbx_locale_build_reference", ""),
-              ("$pbx_embeded_frameworks", ""),
-              ("$os_deployment_target", "IPHONEOS_DEPLOYMENT_TARGET = 15.0;"),
-              ("$targeted_device_family", "1,2"),
-              ("$valid_archs", "arm64"),
-              ("$godot_archs", "arm64"),
-              ("$linker_flags", ""),
-              ("$sdkroot", "iphoneos"),
-              ("$team_id", ""),
-              ("$code_sign_identity_debug", ""), ("$code_sign_identity_release", ""),
-              ("$code_sign_style_debug", "Manual"), ("$code_sign_style_release", "Manual"),
-              ("$provisioning_profile_uuid_debug", ""), ("$provisioning_profile_uuid_release", ""),
-              ("$provisioning_profile_specifier_debug", ""), ("$provisioning_profile_specifier_release", ""),
-              ("$bundle_identifier", "org.godotengine.ioseditor"),
-              ("$short_version", "4.7.1"), ("$version", "4.7.1"),
-              ("$signature", "????"),
-              ("$docs_in_place", "<true/>"), ("$docs_sharing", "<true/>"),
-              ("$required_device_capabilities", "<string>arm64</string>"),
-              ("$camera_usage_description", "Godot projects can use the camera."),
-              ("$photolibrary_usage_description", "Godot projects can use the photo library."),
-              ("$microphone_usage_description", "Godot projects can use the microphone."),
-              ("$interface_orientations", "<string>UIInterfaceOrientationPortrait</string>\n\t\t<string>UIInterfaceOrientationPortraitUpsideDown</string>\n\t\t<string>UIInterfaceOrientationLandscapeLeft</string>\n\t\t<string>UIInterfaceOrientationLandscapeRight</string>"),
-              ("$ipad_interface_orientations", "<string>UIInterfaceOrientationPortrait</string>\n\t\t<string>UIInterfaceOrientationPortraitUpsideDown</string>\n\t\t<string>UIInterfaceOrientationLandscapeLeft</string>\n\t\t<string>UIInterfaceOrientationLandscapeRight</string>"),
-              ("$additional_plist_content", ""),
-              ("$entitlements_full", ""),
-              ("$cpp_code", ""),
-              ("$default_build_config", "Release"),
-              ("$binary", "godot"),
-              ("$name", "Godot Editor"),
-          ]
-          # These keys must replace an entire line in .pbxproj (they appear on a line alone)
+          # --- Map of all placeholders to their replacements ---
+          replacements = {
+              "$pbx_launch_screen_file_reference": '90DD2D9D24B36E8000717FE1 /* Launch Screen.storyboard */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = file.storyboard; path = "Launch Screen.storyboard"; sourceTree = "<group>"; };',
+              "$pbx_launch_screen_copy_files": "90DD2D9D24B36E8000717FE1 /* Launch Screen.storyboard */,",
+              "$pbx_launch_screen_build_phase": "90DD2D9E24B36E8000717FE1 /* Launch Screen.storyboard in Resources */,",
+              "$pbx_launch_screen_build_reference": '90DD2D9E24B36E8000717FE1 /* Launch Screen.storyboard in Resources */ = {isa = PBXBuildFile; fileRef = 90DD2D9D24B36E8000717FE1 /* Launch Screen.storyboard */; };',
+              "$plist_launch_screen_name": "<key>UILaunchStoryboardName</key>\n\t<string>Launch Screen</string>",
+              "$launch_screen_image_mode": "center",
+              "$launch_screen_background_color": 'red="0.10" green="0.11" blue="0.14" alpha="1"',
+              "$moltenvk_buildfile": "/* empty */",
+              "$moltenvk_fileref": "/* empty */",
+              "$moltenvk_buildphase": "/* empty */",
+              "$moltenvk_buildgrp": "/* empty */",
+              "$modules_buildfile": "/* empty */",
+              "$modules_fileref": "/* empty */",
+              "$modules_buildphase": "/* empty */",
+              "$modules_buildgrp": "/* empty */",
+              "$additional_pbx_files": "/* empty */",
+              "$additional_pbx_frameworks_build": "/* empty */",
+              "$additional_pbx_frameworks_refs": "/* empty */",
+              "$additional_pbx_resources_refs": "/* empty */",
+              "$additional_pbx_resources_build": "/* empty */",
+              "$pbx_locale_file_reference": "/* empty */",
+              "$pbx_locale_build_reference": "/* empty */",
+              "$pbx_embeded_frameworks": "/* empty */",
+              "$os_deployment_target": "IPHONEOS_DEPLOYMENT_TARGET = 15.0;",
+              "$targeted_device_family": "1,2",
+              "$valid_archs": "arm64",
+              "$godot_archs": "arm64",
+              "$linker_flags": "",
+              "$sdkroot": "iphoneos",
+              "$team_id": "",
+              "$code_sign_identity_debug": "",
+              "$code_sign_identity_release": "",
+              "$code_sign_style_debug": "Manual",
+              "$code_sign_style_release": "Manual",
+              "$provisioning_profile_uuid_debug": "",
+              "$provisioning_profile_uuid_release": "",
+              "$provisioning_profile_specifier_debug": "",
+              "$provisioning_profile_specifier_release": "",
+              "$bundle_identifier": "org.godotengine.ioseditor",
+              "$short_version": "4.7.1",
+              "$version": "4.7.1",
+              "$signature": "????",
+              "$docs_in_place": "<true/>",
+              "$docs_sharing": "<true/>",
+              "$required_device_capabilities": "<string>arm64</string>",
+              "$camera_usage_description": "Godot projects can use the camera.",
+              "$photolibrary_usage_description": "Godot projects can use the photo library.",
+              "$microphone_usage_description": "Godot projects can use the microphone.",
+              "$interface_orientations": "<string>UIInterfaceOrientationPortrait</string>\n\t\t<string>UIInterfaceOrientationPortraitUpsideDown</string>\n\t\t<string>UIInterfaceOrientationLandscapeLeft</string>\n\t\t<string>UIInterfaceOrientationLandscapeRight</string>",
+              "$ipad_interface_orientations": "<string>UIInterfaceOrientationPortrait</string>\n\t\t<string>UIInterfaceOrientationPortraitUpsideDown</string>\n\t\t<string>UIInterfaceOrientationLandscapeLeft</string>\n\t\t<string>UIInterfaceOrientationLandscapeRight</string>",
+              "$additional_plist_content": "",
+              "$entitlements_full": "",
+              "$cpp_code": "",
+              "$default_build_config": "Release",
+              "$binary": "godot",
+              "$name": "Godot Editor",
+          }
+
+          # These placeholders appear on a line by themselves in .pbxproj.
+          # If they become empty, we replace them with a comment to avoid syntax errors.
           pbxproj_line_keys = {
               "$pbx_launch_screen_file_reference",
               "$pbx_launch_screen_copy_files",
@@ -235,69 +250,71 @@ jobs:
               "$pbx_embeded_frameworks",
           }
 
-          lookup = dict(replacements)
-
-          EXTS = {".pbxproj", ".xcscheme", ".plist", ".storyboard", ".strings",
+          exts = {".pbxproj", ".xcscheme", ".plist", ".storyboard", ".strings",
                   ".swift", ".cpp", ".h", ".entitlements", ".xcworkspacedata"}
 
           changed = 0
+
           for p in pathlib.Path(APP).rglob("*"):
-              if not p.is_file() or p.suffix not in EXTS:
+              if not p.is_file() or p.suffix not in exts:
                   continue
               text = p.read_text(encoding="utf-8")
               original = text
 
-              # ---- special handling for .pbxproj: line-level placeholders ----
+              # ---- .pbxproj: line‑level placeholders get special treatment ----
               if p.suffix == ".pbxproj":
                   lines = text.splitlines(keepends=True)
                   new_lines = []
                   for line in lines:
-                      stripped = line.strip()
-                      # check if this line is essentially a placeholder key (maybe with trailing comment)
-                      matched = False
+                      matched_key = None
                       for key in pbxproj_line_keys:
-                          # match line that starts with the key, possibly followed by a comment and comma
                           if re.fullmatch(rf'\s*{re.escape(key)}\s*(/\*.*\*/,?)?\s*', line):
-                              val = lookup[key]  # replacement string
-                              if val:  # non-empty replacement
-                                  # ensure the new line ends with newline
-                                  if not val.endswith('\n'):
-                                      val += '\n'
-                                  new_lines.append(val)
-                              # if empty, simply drop the line
-                              matched = True
+                              matched_key = key
                               break
-                      if not matched:
+                      if matched_key:
+                          val = replacements[matched_key]
+                          # Empty or comment-only values must still be valid – use a comment
+                          if not val or val.strip() in ("", "/* empty */"):
+                              new_lines.append("/* empty */\n")
+                          else:
+                              if not val.endswith("\n"):
+                                  val += "\n"
+                              new_lines.append(val)
+                      else:
                           new_lines.append(line)
                   text = "".join(new_lines)
 
-              # ---- global string replacements for the remaining placeholders ----
-              for k, v in replacements:
+              # ---- Generic string replacements ----
+              for k, v in replacements.items():
                   if p.suffix == ".pbxproj" and k in pbxproj_line_keys:
-                      continue  # already handled per-line
+                      continue  # already handled per line
                   text = text.replace(k, v)
 
-              # ---- rename folder references after we move "godot_apple_embedded" -> "godot" ----
+              # ---- Rename target/folder in all files ----
               text = text.replace("godot_apple_embedded", "godot")
 
               if text != original:
                   p.write_text(text, encoding="utf-8")
                   changed += 1
-          print("placeholder-processed files:", changed)
 
-          # Rename physical files/folders
+          print(f"Modified {changed} files.")
+
+          # --- Rename physical directories and files ---
           os.rename(f"{APP}/godot_apple_embedded", f"{APP}/godot")
           os.rename(f"{APP}/godot/godot_apple_embedded-Info.plist", f"{APP}/godot/godot-Info.plist")
           os.rename(f"{APP}/godot/godot_apple_embedded.entitlements", f"{APP}/godot/godot.entitlements")
 
-          # Report any leftover placeholders
+          # Check leftover placeholders (informational)
           left = []
           for p in pathlib.Path(APP).rglob("*"):
-              if p.is_file() and p.suffix in EXTS:
+              if p.is_file() and p.suffix in exts:
                   for m in sorted(set(re.findall(r"\$[a-z_]{3,}", p.read_text(encoding="utf-8")))):
                       left.append(f"{p}: {m}")
-          print("leftover placeholders (export_options.plist ইত্যাদিতে থাকলে সমস্যা নেই):")
-          print("\n".join(left) if left else "  none")
+          if left:
+              print("Leftover placeholders (may be harmless):")
+              print("\n".join(left))
+          else:
+              print("No leftover placeholders.")
           PYEOF
 
       - name: Set editor launch arguments (Info.plist)
