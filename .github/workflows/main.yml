@@ -37,6 +37,9 @@ jobs:
       - name: Prepare tools
         run: |
           set -e
+          python3 -m venv venv
+          echo "$PWD/venv/bin" >> $GITHUB_PATH
+          source venv/bin/activate
           python3 -m pip install --quiet --upgrade pip
           python3 -m pip install --quiet scons pillow
           scons --version | head -n 2
