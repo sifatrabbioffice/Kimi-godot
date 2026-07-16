@@ -165,14 +165,15 @@ jobs:
           XCF_EOF
           mv "$APP_DIR/data.pck" "$APP_DIR/godot.pck"
 
-      - name: Fill template placeholders
+      - name: Fill template placeholders and fix project
         run: |
           python3 << 'PYEOF'
           import os, re, pathlib
 
           APP = "ios_app"
 
-          R = [
+          # -------------------- replacement map ---------------------------------
+          replacements = [
               ("$pbx_launch_screen_file_reference", '90DD2D9D24B36E8000717FE1 /* Launch Screen.storyboard */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = file.storyboard; path = "Launch Screen.storyboard"; sourceTree = "<group>"; };'),
               ("$pbx_launch_screen_copy_files", "90DD2D9D24B36E8000717FE1 /* Launch Screen.storyboard */,"),
               ("$pbx_launch_screen_build_phase", "90DD2D9E24B36E8000717FE1 /* Launch Screen.storyboard in Resources */,"),
@@ -217,6 +218,24 @@ jobs:
               ("$binary", "godot"),
               ("$name", "Godot Editor"),
           ]
+          # These keys must replace an entire line in .pbxproj (they appear on a line alone)
+          pbxproj_line_keys = {
+              "$pbx_launch_screen_file_reference",
+              "$pbx_launch_screen_copy_files",
+              "$pbx_launch_screen_build_phase",
+              "$pbx_launch_screen_build_reference",
+              "$moltenvk_buildfile", "$moltenvk_fileref",
+              "$moltenvk_buildphase", "$moltenvk_buildgrp",
+              "$modules_buildfile", "$modules_fileref",
+              "$modules_buildphase", "$modules_buildgrp",
+              "$additional_pbx_files", "$additional_pbx_frameworks_build",
+              "$additional_pbx_frameworks_refs", "$additional_pbx_resources_refs",
+              "$additional_pbx_resources_build",
+              "$pbx_locale_file_reference", "$pbx_locale_build_reference",
+              "$pbx_embeded_frameworks",
+          }
+
+          lookup = dict(replacements)
 
           EXTS = {".pbxproj", ".xcscheme", ".plist", ".storyboard", ".strings",
                   ".swift", ".cpp", ".h", ".entitlements", ".xcworkspacedata"}
@@ -225,20 +244,53 @@ jobs:
           for p in pathlib.Path(APP).rglob("*"):
               if not p.is_file() or p.suffix not in EXTS:
                   continue
-              t = p.read_text(encoding="utf-8")
-              o = t
-              for k, v in R:
-                  t = t.replace(k, v)
-              if t != o:
-                  p.write_text(t, encoding="utf-8")
+              text = p.read_text(encoding="utf-8")
+              original = text
+
+              # ---- special handling for .pbxproj: line-level placeholders ----
+              if p.suffix == ".pbxproj":
+                  lines = text.splitlines(keepends=True)
+                  new_lines = []
+                  for line in lines:
+                      stripped = line.strip()
+                      # check if this line is essentially a placeholder key (maybe with trailing comment)
+                      matched = False
+                      for key in pbxproj_line_keys:
+                          # match line that starts with the key, possibly followed by a comment and comma
+                          if re.fullmatch(rf'\s*{re.escape(key)}\s*(/\*.*\*/,?)?\s*', line):
+                              val = lookup[key]  # replacement string
+                              if val:  # non-empty replacement
+                                  # ensure the new line ends with newline
+                                  if not val.endswith('\n'):
+                                      val += '\n'
+                                  new_lines.append(val)
+                              # if empty, simply drop the line
+                              matched = True
+                              break
+                      if not matched:
+                          new_lines.append(line)
+                  text = "".join(new_lines)
+
+              # ---- global string replacements for the remaining placeholders ----
+              for k, v in replacements:
+                  if p.suffix == ".pbxproj" and k in pbxproj_line_keys:
+                      continue  # already handled per-line
+                  text = text.replace(k, v)
+
+              # ---- rename folder references after we move "godot_apple_embedded" -> "godot" ----
+              text = text.replace("godot_apple_embedded", "godot")
+
+              if text != original:
+                  p.write_text(text, encoding="utf-8")
                   changed += 1
           print("placeholder-processed files:", changed)
 
-          # $binary -> godot : file/dir renames
+          # Rename physical files/folders
           os.rename(f"{APP}/godot_apple_embedded", f"{APP}/godot")
           os.rename(f"{APP}/godot/godot_apple_embedded-Info.plist", f"{APP}/godot/godot-Info.plist")
           os.rename(f"{APP}/godot/godot_apple_embedded.entitlements", f"{APP}/godot/godot.entitlements")
 
+          # Report any leftover placeholders
           left = []
           for p in pathlib.Path(APP).rglob("*"):
               if p.is_file() and p.suffix in EXTS:
