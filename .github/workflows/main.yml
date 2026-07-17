@@ -14,7 +14,7 @@ on:
 env:
   GODOT_REF: ${{ inputs.godot_ref }}
   APP_DIR: ios_app
-  BINARY: "Godot Editor"   # final .app name
+  BINARY: "Godot Editor"
 
 jobs:
   build:
@@ -39,7 +39,7 @@ jobs:
       - name: Clone Godot source
         run: git clone --depth 1 --branch "$GODOT_REF" https://github.com/godotengine/godot.git godot
 
-      # ---- 3. ইঞ্জিন প্যাচ (বুটে সরাসরি এডিটর) ----------------------------
+      # ---- 3. ইঞ্জিন প্যাচ -----------------------------------------------
       - name: Patch engine (boot straight into editor)
         working-directory: godot
         run: |
@@ -106,7 +106,7 @@ jobs:
           SCRIPT_EOF
           python3 /tmp/patch_engine.py
 
-      # ---- 4. Godot এডিটর লাইব্রেরি কম্পাইল (iOS arm64) --------------------
+      # ---- 4. Godot এডিটর লাইব্রেরি কম্পাইল ------------------------------------
       - name: Compile Godot editor library (iOS arm64)
         working-directory: godot
         run: |
@@ -114,14 +114,13 @@ jobs:
           scons platform=ios target=editor arch=arm64 vulkan=no debug_symbols=no -j"$(sysctl -n hw.logicalcpu)"
           ls -lh bin/
 
-      # ---- 5. Xcode প্রজেক্ট সাজানো --------------------------------------
+      # ---- 5. Xcode প্রজেক্ট সাজানো ------------------------------------------
       - name: Assemble Xcode project with editor library
         run: |
           set -e
           LIB="$(ls godot/bin/libgodot.ios.editor.arm64*.a | head -n1)"
           echo "Editor library: $LIB"
           cp -R "godot/misc/dist/apple_embedded_xcode" "$APP_DIR"
-          # অপ্রয়োজনীয় xcframework ফোল্ডার মুছে ফেলা
           rm -rf "$APP_DIR"/libgodot.visionos.debug.xcframework \
                  "$APP_DIR"/libgodot.visionos.release.xcframework \
                  "$APP_DIR"/libgodot_camera.ios.debug.xcframework \
@@ -161,20 +160,20 @@ jobs:
           XCF_EOF
           mv "$APP_DIR/data.pck" "$APP_DIR/godot.pck"
 
-      # ---- 6. স্মার্ট প্লেসহোল্ডার রিপ্লেস (পার্স-এবল pbxproj সহ) ---------
-      - name: Intelligently replace ALL placeholders (no corruption)
+      # ---- 6. প্রজেক্ট ফাইল মেরামত (সমস্ত placeholder বুদ্ধিমত্তার সাথে) -------
+      - name: Repair all project files (pbxproj, plist, scheme)
         run: |
           set -e
           python3 << 'PYEOF'
-          import re, os
+          import re, os, plistlib
           from pathlib import Path
 
           APP = "ios_app"
 
-          # ------------------ .pbxproj-এর জন্য বিশেষ ক্লিনার -----------------
-          def fix_pbxproj_placeholders(content):
-              # প্রথমে নির্দিষ্ট কয়েকটি placeholder replace করি (যা আমরা জানি)
-              known = {
+          # ================== pbxproj স্পেশাল ক্লিনার ==================
+          def clean_pbxproj(content):
+              # 1. নির্দিষ্ট বড় placeholder গুলো replace
+              specifics = {
                   "$pbx_launch_screen_file_reference":
                       '90DD2D9D24B36E8000717FE1 /* Launch Screen.storyboard */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = file.storyboard; path = "Launch Screen.storyboard"; sourceTree = "<group>"; };',
                   "$pbx_launch_screen_copy_files":
@@ -184,42 +183,38 @@ jobs:
                   "$pbx_launch_screen_build_reference":
                       '90DD2D9E24B36E8000717FE1 /* Launch Screen.storyboard in Resources */ = {isa = PBXBuildFile; fileRef = 90DD2D9D24B36E8000717FE1 /* Launch Screen.storyboard */; };',
               }
-              for k, v in known.items():
+              for k, v in specifics.items():
                   content = content.replace(k, v)
 
-              # এরপর সব $xxx প্যাটার্ন ধরে context অনুযায়ী replace করি
-              def replace_unknown(match):
-                  token = match.group(0)
-                  start = match.start()
-                  end = match.end()
-                  # যদি token-এর পরে ; বা , থাকে, পুরো জিনিসটা খালি করতে হবে নাকি শুধু token?
-                  # pbxproj-এ $xxx সাধারণত কোনো ভ্যালুর জায়গায় বসে, যেমন:
-                  # key = $xxx;   কিংবা $xxx, (array-র মধ্যে)
-                  # আমরা চারপাশ দেখে ঠিক করি
-                  before = content[max(0, start-10):start]
-                  after = content[end:end+10]
+              # 2. বাকি সব $xxx placeholder-কে context অনুযায়ী replace
+              def replace_dollar(m):
+                  token = m.group(0)
+                  start = m.start()
+                  end = m.end()
+                  before = content[max(0, start-20):start]
+                  after = content[end:end+20]
 
-                  # যদি "= $xxx;" হয় → key = "";  (খালি স্ট্রিং)
-                  if before.strip().endswith("=") and after.startswith(";"):
+                  # Case: = $xxx;  => = "";
+                  if re.search(r'=\s*$', before.rstrip()) and after.lstrip().startswith(';'):
                       return '""'
-                  # যদি "$xxx," হয় (array element) → মুছে দিই
-                  if after.startswith(","):
+                  # Case: $xxx, (array element) => remove
+                  if after.lstrip().startswith(','):
                       return ''
-                  # যদি "$xxx;" আলাদা লাইনে → মুছে দিই
-                  if after.startswith(";"):
+                  # Case: $xxx; (standalone statement) => remove
+                  if after.lstrip().startswith(';'):
                       return ''
-                  # নাহলে শুধু টোকেনটাকে খালি স্ট্রিং দিয়ে replace
+                  # Case: ( xxx, ) style
+                  if before.rstrip().endswith(',') and after.lstrip().startswith(')'):
+                      return ''
+                  # default: empty string
                   return '""'
-              content = re.sub(r'\$[a-zA-Z_][a-zA-Z0-9_]*', replace_unknown, content)
+              content = re.sub(r'\$[a-zA-Z_][a-zA-Z0-9_]*', replace_dollar, content)
 
-              # ভুলে যাওয়া মিসিং সেমিকোলন বা কমা থাকলে ঠিক করি
-              # = "" ; → = "";
-              content = re.sub(r'= "" ;', '= "";', content)
-              # একাধিক কমা → একটি কমা
-              content = re.sub(r',\s*,', ',', content)
+              # পরিষ্কার: = "" ; -> = "";
+              content = re.sub(r'= ""\s*;', '= "";', content)
               return content
 
-          # ------------------ অন্যান্য ফাইলের জন্য সাধারণ replace -------------
+          # ================== অন্যান্য ফাইলের জন্য সাধারণ replace =========
           common_replacements = {
               "$plist_launch_screen_name": "<key>UILaunchStoryboardName</key>\n\t<string>Launch Screen</string>",
               "$launch_screen_image_mode": "center",
@@ -246,7 +241,6 @@ jobs:
               "$plist_bundle_display_name": "Godot Editor",
               "$plist_bundle_version": "4.7.1",
               "$plist_bundle_short_version": "4.7.1",
-              # অন্যান্য যেগুলো pbxproj-এও আসতে পারে কিন্তু আমরা pbxproj-এর জন্য আলাদা ক্লিনার দিচ্ছি
               "$os_deployment_target": "IPHONEOS_DEPLOYMENT_TARGET = 15.0;",
               "$targeted_device_family": "1,2",
               "$valid_archs": "arm64",
@@ -268,48 +262,53 @@ jobs:
                         ".md", ".txt", ".mm", ".m", ".xcconfig", ".hpp",
                         ".inl", ".def", ".modulemap"}
 
-          def safe_read_text(path):
+          def safe_read(path):
               try: return path.read_text(encoding="utf-8")
               except: return None
 
-          def safe_write_text(path, text):
+          def safe_write(path, text):
               try: path.write_text(text, encoding="utf-8"); return True
               except: return False
 
-          # পুরো প্রজেক্ট স্ক্যান করে ফাইল প্রসেসিং
+          # সমস্ত ফাইল প্রক্রিয়া
           for f in Path(APP).rglob("*"):
               if not f.is_file() or f.suffix.lower() not in EXTENSIONS:
                   continue
-              text = safe_read_text(f)
+              text = safe_read(f)
               if text is None: continue
 
               if f.suffix.lower() == ".pbxproj":
-                  # pbxproj-এর জন্য স্পেশাল ফিক্স
-                  text = fix_pbxproj_placeholders(text)
+                  text = clean_pbxproj(text)
               else:
-                  # বাকি ফাইলের জন্য সাধারণ replace
                   for k, v in common_replacements.items():
                       text = text.replace(k, v)
-                  # plist বা xml ফাইলে $ চিহ্ন থাকলে তাকে খালি স্ট্রিং দিয়ে replace করা ভালো
+                  # plist/xml-এ অবশিষ্ট $ দূর
                   if f.suffix.lower() in {".plist", ".xml", ".entitlements", ".xcprivacy"}:
                       text = re.sub(r'\$[a-zA-Z_][a-zA-Z0-9_]*', '', text)
 
-              safe_write_text(f, text)
+              safe_write(f, text)
 
-          # Scheme fix: buildableName -> Godot Editor.app
-          for scheme_path in Path(APP).rglob("*.xcscheme"):
-              scheme_text = scheme_path.read_text()
-              scheme_text = re.sub(r'buildableName = "[^"]*"', 'buildableName = "Godot Editor.app"', scheme_text)
-              scheme_path.write_text(scheme_text)
-              print(f"✅ Scheme updated: {scheme_path}")
+          # Info.plist ভ্যালিডিটি চেক (যদি এখনো placeholder থাকে)
+          pl_path = os.path.join(APP, "godot_apple_embedded", "godot_apple_embedded-Info.plist")
+          try:
+              with open(pl_path, "rb") as pf:
+                  plistlib.load(pf)
+              print("✅ Info.plist is valid (no leftover placeholders).")
+          except Exception as e:
+              print("❌ Info.plist invalid:", e)
+              exit(1)
 
-          print("✅ All files processed successfully. pbxproj should be valid now.")
+          # Scheme fix
+          for sch in Path(APP).rglob("*.xcscheme"):
+              txt = sch.read_text()
+              txt = re.sub(r'buildableName = "[^"]*"', 'buildableName = "Godot Editor.app"', txt)
+              sch.write_text(txt)
+              print(f"✅ Scheme fixed: {sch.name}")
           PYEOF
 
-      # ---- 7. Info.plist আপডেট (এডিটর লঞ্চ আর্গুমেন্ট) ------------------
+      # ---- 7. Info.plist আপডেট (এডিটর লঞ্চ আর্গুমেন্ট) ----------------------
       - name: Set editor launch arguments (Info.plist)
         run: |
-          set -e
           python3 << 'PYEOF'
           import plistlib
 
@@ -325,7 +324,7 @@ jobs:
           print("✅ Info.plist updated.")
           PYEOF
 
-      # ---- 8. অ্যাপ আইকন -------------------------------------------------
+      # ---- 8. অ্যাপ আইকন ------------------------------------------------------
       - name: Generate app icon
         run: |
           python3 << 'PYEOF'
@@ -341,7 +340,7 @@ jobs:
           json.dump({"images":[{"filename":"icon_1024.png","idiom":"universal","platform":"ios","size":"1024x1024"}],"info":{"author":"xcode","version":1}}, open(os.path.join(base, "Contents.json"), "w"))
           PYEOF
 
-      # ---- 9. ডেমো প্রজেক্ট ---------------------------------------------
+      # ---- 9. ডেমো প্রজেক্ট ---------------------------------------------------
       - name: Create bundled demo project
         run: |
           mkdir -p demo_project
@@ -364,7 +363,7 @@ jobs:
           text = "Godot iOS Editor is working!"
           TSCN_EOF
 
-      # ---- 10. Xcode বিল্ড -----------------------------------------------
+      # ---- 10. Xcode বিল্ড (unsigned) ---------------------------------------
       - name: Build .app with Xcode (unsigned)
         run: |
           set -e
@@ -386,7 +385,7 @@ jobs:
             build
           ls -lh "$APP_DIR/dd/Build/Products/Release-iphoneos/"
 
-      # ---- 11. IPA প্যাকেজ -----------------------------------------------
+      # ---- 11. IPA প্যাকেজ -------------------------------------------------
       - name: Package IPA
         run: |
           set -e
@@ -399,7 +398,7 @@ jobs:
           zip -qry "$IPA" Payload
           ls -lh "$IPA"
 
-      # ---- 12. আর্টিফ্যাক্ট ----------------------------------------------
+      # ---- 12. আর্টিফ্যাক্ট --------------------------------------------------
       - name: Upload IPA artifact
         uses: actions/upload-artifact@v4
         with:
