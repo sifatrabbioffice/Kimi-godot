@@ -108,33 +108,31 @@ jobs:
               else:
                   print(f"WARNING: Could not find standard include in {filepath}")
                   # Add at top
-                  content = '#include <cstdio>
-' + content
+                  content = '#include <cstdio>\n' + content
                   include_line = '#include <cstdio>'
 
-          new_code = '
-'.join([
+          new_code = '\n'.join([
               '',
               'static NSString *godot_documents_dir(void) {',
-              '	return [NSSearchPathForDirectoriesInDomains(NSDocumentDirectory, NSUserDomainMask, YES) firstObject];',
+              '    return [NSSearchPathForDirectoriesInDomains(NSDocumentDirectory, NSUserDomainMask, YES) firstObject];',
               '}',
               '',
               '// Copies the project bundled inside the .app to the writable Documents',
               '// directory on first launch, so the editor can open it (iOS sandbox hack).',
               'static void godot_bootstrap_project(void) {',
-              '	NSString *proj = [[[NSBundle mainBundle] infoDictionary] objectForKey:@"godot_editor_bootstrap_project"];',
-              '	if (!proj || [proj length] == 0) {',
-              '		return;',
-              '	}',
-              '	NSFileManager *fm = [NSFileManager defaultManager];',
-              '	NSString *dst = [godot_documents_dir() stringByAppendingPathComponent:proj];',
-              '	if ([fm fileExistsAtPath:dst]) {',
-              '		return;',
-              '	}',
-              '	NSString *src = [[NSBundle mainBundle] pathForResource:proj ofType:nil];',
-              '	if (src) {',
-              '		[fm copyItemAtPath:src toPath:dst error:nil];',
-              '	}',
+              '    NSString *proj = [[[NSBundle mainBundle] infoDictionary] objectForKey:@"godot_editor_bootstrap_project"];',
+              '    if (!proj || [proj length] == 0) {',
+              '        return;',
+              '    }',
+              '    NSFileManager *fm = [NSFileManager defaultManager];',
+              '    NSString *dst = [godot_documents_dir() stringByAppendingPathComponent:proj];',
+              '    if ([fm fileExistsAtPath:dst]) {',
+              '        return;',
+              '    }',
+              '    NSString *src = [[NSBundle mainBundle] pathForResource:proj ofType:nil];',
+              '    if (src) {',
+              '        [fm copyItemAtPath:src toPath:dst error:nil];',
+              '    }',
               '}',
               ''
           ])
@@ -142,13 +140,11 @@ jobs:
           if include_line in content:
               content = content.replace(include_line, include_line + new_code)
           else:
-              content = new_code + '
-' + content
+              content = new_code + '\n' + content
 
           # Find process_args or main function to inject bootstrap call
           old_process = "int process_args(int p_argc, char **p_args, char **r_args) {"
-          new_process = "int process_args(int p_argc, char **p_args, char **r_args) {
-	godot_bootstrap_project();"
+          new_process = "int process_args(int p_argc, char **p_args, char **r_args) {\n    godot_bootstrap_project();"
 
           if old_process in content:
               content = content.replace(old_process, new_process)
@@ -158,15 +154,13 @@ jobs:
               import re
               main_pattern = r'int\s+main\s*\(\s*int\s+argc\s*,\s*char\s*\*\*\s*argv\s*\)'
               if re.search(main_pattern, content):
-                  content = re.sub(main_pattern, lambda m: m.group(0) + ' {
-	godot_bootstrap_project();', content, count=1)
+                  content = re.sub(main_pattern, lambda m: m.group(0) + ' {\n    godot_bootstrap_project();', content, count=1)
                   print("Patched main()")
               else:
                   print("WARNING: Could not find injection point. Bootstrap may not work.")
 
           # Add $DOCS/ expansion
-          lines = content.split('
-')
+          lines = content.split('\n')
           new_lines = []
           i = 0
           while i < len(lines):
@@ -176,11 +170,10 @@ jobs:
                   indent = line[:len(line) - len(line.lstrip())]
                   new_lines.insert(-1, indent + "// Expand $DOCS/ to the app's writable Documents directory.")
                   new_lines.insert(-1, indent + 'if ([str hasPrefix:@"$DOCS/"]) {')
-                  new_lines.insert(-1, indent + '	str = [godot_documents_dir() stringByAppendingPathComponent:[str substringFromIndex:6]];')
+                  new_lines.insert(-1, indent + '    str = [godot_documents_dir() stringByAppendingPathComponent:[str substringFromIndex:6]];')
                   new_lines.insert(-1, indent + '}')
               i += 1
-          content = '
-'.join(new_lines)
+          content = '\n'.join(new_lines)
 
           with open(filepath, "w") as f:
               f.write(content)
@@ -229,25 +222,25 @@ jobs:
           <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
           <plist version="1.0">
           <dict>
-          	<key>AvailableLibraries</key>
-          	<array>
-          		<dict>
-          			<key>LibraryIdentifier</key>
-          			<string>ios-arm64</string>
-          			<key>LibraryPath</key>
-          			<string>libgodot.a</string>
-          			<key>SupportedArchitectures</key>
-          			<array>
-          				<string>arm64</string>
-          			</array>
-          			<key>SupportedPlatform</key>
-          			<string>ios</string>
-          		</dict>
-          	</array>
-          	<key>CFBundlePackageType</key>
-          	<string>XFWK</string>
-          	<key>XCFrameworkFormatVersion</key>
-          	<string>1.0</string>
+              <key>AvailableLibraries</key>
+              <array>
+                  <dict>
+                      <key>LibraryIdentifier</key>
+                      <string>ios-arm64</string>
+                      <key>LibraryPath</key>
+                      <string>libgodot.a</string>
+                      <key>SupportedArchitectures</key>
+                      <array>
+                          <string>arm64</string>
+                      </array>
+                      <key>SupportedPlatform</key>
+                      <string>ios</string>
+                  </dict>
+              </array>
+              <key>CFBundlePackageType</key>
+              <string>XFWK</string>
+              <key>XCFrameworkFormatVersion</key>
+              <string>1.0</string>
           </dict>
           </plist>
           XCF_EOF
@@ -279,25 +272,25 @@ jobs:
           <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
           <plist version="1.0">
           <dict>
-          	<key>AvailableLibraries</key>
-          	<array>
-          		<dict>
-          			<key>LibraryIdentifier</key>
-          			<string>ios-arm64</string>
-          			<key>LibraryPath</key>
-          			<string>libMoltenVK.a</string>
-          			<key>SupportedArchitectures</key>
-          			<array>
-          				<string>arm64</string>
-          			</array>
-          			<key>SupportedPlatform</key>
-          			<string>ios</string>
-          		</dict>
-          	</array>
-          	<key>CFBundlePackageType</key>
-          	<string>XFWK</string>
-          	<key>XCFrameworkFormatVersion</key>
-          	<string>1.0</string>
+              <key>AvailableLibraries</key>
+              <array>
+                  <dict>
+                      <key>LibraryIdentifier</key>
+                      <string>ios-arm64</string>
+                      <key>LibraryPath</key>
+                      <string>libMoltenVK.a</string>
+                      <key>SupportedArchitectures</key>
+                      <array>
+                          <string>arm64</string>
+                      </array>
+                      <key>SupportedPlatform</key>
+                      <string>ios</string>
+                  </dict>
+              </array>
+              <key>CFBundlePackageType</key>
+              <string>XFWK</string>
+              <key>XCFrameworkFormatVersion</key>
+              <string>1.0</string>
           </dict>
           </plist>
           MVK_EOF
@@ -595,13 +588,18 @@ jobs:
             exit 1
           fi
 
-          /usr/libexec/PlistBuddy -c "Add :godot_editor_bootstrap_project string demo_project" "$PLIST" ||             /usr/libexec/PlistBuddy -c "Set :godot_editor_bootstrap_project demo_project" "$PLIST"
+          /usr/libexec/PlistBuddy -c "Add :godot_editor_bootstrap_project string demo_project" "$PLIST" || \
+            /usr/libexec/PlistBuddy -c "Set :godot_editor_bootstrap_project demo_project" "$PLIST"
 
           /usr/libexec/PlistBuddy -c "Add :godot_cmdline array" "$PLIST" || true
-          /usr/libexec/PlistBuddy -c "Add :godot_cmdline:0 string --editor" "$PLIST" ||             /usr/libexec/PlistBuddy -c "Set :godot_cmdline:0 --editor" "$PLIST"
-          /usr/libexec/PlistBuddy -c "Add :godot_cmdline:1 string --single-window" "$PLIST" ||             /usr/libexec/PlistBuddy -c "Set :godot_cmdline:1 --single-window" "$PLIST"
-          /usr/libexec/PlistBuddy -c "Add :godot_cmdline:2 string --path" "$PLIST" ||             /usr/libexec/PlistBuddy -c "Set :godot_cmdline:2 --path" "$PLIST"
-          /usr/libexec/PlistBuddy -c "Add :godot_cmdline:3 string \$DOCS/demo_project" "$PLIST" ||             /usr/libexec/PlistBuddy -c "Set :godot_cmdline:3 \$DOCS/demo_project" "$PLIST"
+          /usr/libexec/PlistBuddy -c "Add :godot_cmdline:0 string --editor" "$PLIST" || \
+            /usr/libexec/PlistBuddy -c "Set :godot_cmdline:0 --editor" "$PLIST"
+          /usr/libexec/PlistBuddy -c "Add :godot_cmdline:1 string --single-window" "$PLIST" || \
+            /usr/libexec/PlistBuddy -c "Set :godot_cmdline:1 --single-window" "$PLIST"
+          /usr/libexec/PlistBuddy -c "Add :godot_cmdline:2 string --path" "$PLIST" || \
+            /usr/libexec/PlistBuddy -c "Set :godot_cmdline:2 --path" "$PLIST"
+          /usr/libexec/PlistBuddy -c "Add :godot_cmdline:3 string \$DOCS/demo_project" "$PLIST" || \
+            /usr/libexec/PlistBuddy -c "Set :godot_cmdline:3 \$DOCS/demo_project" "$PLIST"
 
           echo "Launch arguments set. Contents:"
           cat "$PLIST"
@@ -703,7 +701,23 @@ jobs:
           xcodebuild -project "$APP_DIR/${BINARY}.xcodeproj" -list || true
 
           # বিল্ড
-          xcodebuild             -project "$APP_DIR/${BINARY}.xcodeproj"             -scheme "$BINARY"             -configuration Release             -sdk iphoneos             -destination "generic/platform=iOS"             -derivedDataPath "$APP_DIR/dd"             CODE_SIGNING_ALLOWED=NO             CODE_SIGNING_REQUIRED=NO             CODE_SIGN_IDENTITY=""             DEVELOPMENT_TEAM=""             PROVISIONING_PROFILE=""             PROVISIONING_PROFILE_SPECIFIER=""             VALIDATE_PRODUCT=NO             ONLY_ACTIVE_ARCH=YES             ARCHS=arm64             build
+          xcodebuild \
+            -project "$APP_DIR/${BINARY}.xcodeproj" \
+            -scheme "$BINARY" \
+            -configuration Release \
+            -sdk iphoneos \
+            -destination "generic/platform=iOS" \
+            -derivedDataPath "$APP_DIR/dd" \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            DEVELOPMENT_TEAM="" \
+            PROVISIONING_PROFILE="" \
+            PROVISIONING_PROFILE_SPECIFIER="" \
+            VALIDATE_PRODUCT=NO \
+            ONLY_ACTIVE_ARCH=YES \
+            ARCHS=arm64 \
+            build
 
           echo "=== Build products ==="
           ls -lh "$APP_DIR/dd/Build/Products/Release-iphoneos/" || true
