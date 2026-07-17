@@ -19,7 +19,7 @@ env:
 jobs:
   build:
     name: Build Godot Editor IPA
-    runs-on: macos-15
+    runs-on: macos-13-xlarge
     timeout-minutes: 300
 
     steps:
@@ -33,7 +33,7 @@ jobs:
           python3 -m pip install --quiet --upgrade pip
           python3 -m pip install --quiet scons pillow
           scons --version | head -n 2
-          xcodebuild -version 14
+          xcodebuild -version 
 
       # ---- 2. Godot সোর্স ক্লোন ------------------------------------------
       - name: Clone Godot source
