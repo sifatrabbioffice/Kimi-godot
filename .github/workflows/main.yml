@@ -201,6 +201,13 @@ jobs:
               except Exception:
                   return False
 
+          # DEBUG: List all files in the project
+          print("=== DEBUG: Files in ios_app ===")
+          for p in sorted(pathlib.Path(APP).rglob("*")):
+              if p.is_file():
+                  print(f"  {p}")
+          print("=== END DEBUG ===")
+
           # Step 1: Known replacements on text files only
           R = [
               ("$pbx_launch_screen_file_reference", '90DD2D9D24B36E8000717FE1 /* Launch Screen.storyboard */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = file.storyboard; path = "Launch Screen.storyboard"; sourceTree = "<group>"; };'),
@@ -278,7 +285,6 @@ jobs:
           print("Known placeholder-processed files:", changed)
 
           # Step 2: AGGRESSIVE - find ALL $word patterns and blank them
-          # Only on text files we can read
           total_blanked = 0
           for p in pathlib.Path(APP).rglob("*"):
               if not p.is_file():
@@ -287,7 +293,6 @@ jobs:
               if t is None:
                   continue
               o = t
-              # Find all $word patterns (at least 3 chars after $)
               placeholders = set(re.findall(r'\$[a-zA-Z_][a-zA-Z0-9_]{2,}', t))
               for ph in placeholders:
                   t = t.replace(ph, "")
@@ -319,7 +324,34 @@ jobs:
                       print("VERIFIED: .pbxproj is clean - no placeholders remaining!")
               else:
                   print("WARNING: Could not read .pbxproj for verification")
+          else:
+              print(f"WARNING: .pbxproj not found at {pbxproj_path}")
+              # Try to find it
+              for p in pathlib.Path(APP).rglob("*.pbxproj"):
+                  print(f"  Found .pbxproj at: {p}")
           PYEOF
+
+      - name: DEBUG - Check .xcodeproj structure
+        run: |
+          set -e
+          echo "=== DEBUG: .xcodeproj structure ==="
+          ls -la "$APP_DIR/"
+          echo "---"
+          if [ -d "$APP_DIR/godot_apple_embedded.xcodeproj" ]; then
+            ls -la "$APP_DIR/godot_apple_embedded.xcodeproj/"
+            echo "---"
+            if [ -f "$APP_DIR/godot_apple_embedded.xcodeproj/project.pbxproj" ]; then
+              echo "project.pbxproj exists"
+              head -20 "$APP_DIR/godot_apple_embedded.xcodeproj/project.pbxproj"
+            else
+              echo "project.pbxproj MISSING!"
+            fi
+          else
+            echo ".xcodeproj directory MISSING!"
+            echo "Looking for .xcodeproj..."
+            find "$APP_DIR" -name "*.xcodeproj" -type d
+          fi
+          echo "=== END DEBUG ==="
 
       - name: Set editor launch arguments (Info.plist)
         run: |
