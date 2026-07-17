@@ -213,6 +213,12 @@ jobs:
               "$code_sign_style_debug": "Manual", "$code_sign_style_release": "Manual",
               "$provisioning_profile_uuid_debug": "", "$provisioning_profile_uuid_release": "",
               "$provisioning_profile_specifier_debug": "", "$provisioning_profile_specifier_release": "",
+              "$provisioning_profile_uuid": "",   # 🆕 সাধারণ placeholder
+
+              # 🆕 প্রাইভেসি ম্যানিফেস্ট placeholder গুলো (খালি করা)
+              "$priv_api_types": "",
+              "$priv_collection": "",
+              "$priv_tracking": "",
 
               # বান্ডল
               "$bundle_identifier": "org.godotengine.ioseditor",
