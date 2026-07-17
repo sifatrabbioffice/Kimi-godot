@@ -121,7 +121,6 @@ jobs:
           LIB="$(ls godot/bin/libgodot.ios.editor.arm64*.a | head -n1)"
           echo "Editor library: $LIB"
           cp -R "godot/misc/dist/apple_embedded_xcode" "$APP_DIR"
-          # বাদ দেওয়া অপ্রয়োজনীয় xcframework
           rm -rf "$APP_DIR"/libgodot.visionos.debug.xcframework \
                  "$APP_DIR"/libgodot.visionos.release.xcframework \
                  "$APP_DIR"/libgodot_camera.ios.debug.xcframework \
@@ -161,7 +160,7 @@ jobs:
           XCF_EOF
           mv "$APP_DIR/data.pck" "$APP_DIR/godot.pck"
 
-      # ---- 6. placeholder দূর + pbxproj লাইব্রেরি দিয়ে কনফিগার ---------
+      # ---- 6. placeholder সরানো + pbxproj দিয়ে কনফিগার (সঠিক API) --------
       - name: Sanitize and configure Xcode project
         run: |
           set -e
@@ -172,10 +171,10 @@ jobs:
           APP = "ios_app"
           pbxproj_path = os.path.join(APP, "godot_apple_embedded.xcodeproj", "project.pbxproj")
 
-          # ---------- 1. সম্পূর্ণ placeholder ম্যাপিং (পার্স-এবল করতে) ----------
           with open(pbxproj_path, "r") as f:
               content = f.read()
 
+          # সম্পূর্ণ placeholder ম্যাপিং
           mapping = {
               "$pbx_launch_screen_file_reference":
                   '90DD2D9D24B36E8000717FE1 /* Launch Screen.storyboard */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = file.storyboard; path = "Launch Screen.storyboard"; sourceTree = "<group>"; };',
@@ -238,17 +237,22 @@ jobs:
           for k, v in mapping.items():
               content = content.replace(k, v)
 
-          # এখনো কোনো $xxx থেকে গেলে ফাঁকা করে দিই (যেমন $plist_launch_screen_name যা অন্য ফাইলে আছে)
+          # যেকোনো অবশিষ্ট $xxx মুছে ফেলা
           content = re.sub(r'\$[a-zA-Z_][a-zA-Z0-9_]*', '', content)
 
           with open(pbxproj_path, "w") as f:
               f.write(content)
           print("✅ Placeholders replaced, .pbxproj ready to parse.")
 
-          # ---------- 2. pbxproj লাইব্রেরি দিয়ে কনফিগার ----------
+          # ---------- pbxproj API v3+ অনুযায়ী ----------
           project = XcodeProject.load(pbxproj_path)
-          target = project.get_targets()[0]
-          target.set_product_name("Godot Editor")
+          targets = project.objects.get_targets()
+          if not targets:
+              print("❌ No targets found!")
+              exit(1)
+          target = targets[0]
+          # PRODUCT_NAME সেট
+          target.set_build_setting("PRODUCT_NAME", "Godot Editor")
 
           for config in ("Debug", "Release"):
               target.set_build_setting("PRODUCT_BUNDLE_IDENTIFIER", "org.godotengine.ioseditor", config)
