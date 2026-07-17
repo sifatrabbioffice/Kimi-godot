@@ -160,7 +160,7 @@ jobs:
           XCF_EOF
           mv "$APP_DIR/data.pck" "$APP_DIR/godot.pck"
 
-      # ---- 6. placeholder replace + scheme fix (কোনো pbxproj API নয়) ----
+      # ---- 6. placeholder replace + scheme fix --------------------------
       - name: Replace placeholders and fix scheme
         run: |
           set -e
@@ -170,7 +170,6 @@ jobs:
 
           APP = "ios_app"
 
-          # সম্পূর্ণ placeholder ম্যাপিং
           mapping = {
               "$pbx_launch_screen_file_reference":
                   '90DD2D9D24B36E8000717FE1 /* Launch Screen.storyboard */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = file.storyboard; path = "Launch Screen.storyboard"; sourceTree = "<group>"; };',
@@ -245,7 +244,6 @@ jobs:
               try: path.write_text(text, encoding="utf-8"); return True
               except: return False
 
-          # Replace in all relevant files
           for f in Path(APP).rglob("*"):
               if not f.is_file() or f.suffix.lower() not in EXTENSIONS:
                   continue
@@ -258,7 +256,6 @@ jobs:
                   safe_write_text(f, text)
           print("✅ All placeholders replaced.")
 
-          # Scheme fix: buildableName -> Godot Editor.app
           scheme_glob = list(Path(APP).rglob("*.xcscheme"))
           if scheme_glob:
               scheme_path = scheme_glob[0]
@@ -270,17 +267,24 @@ jobs:
               print("⚠️  No .xcscheme found, skipping scheme fix.")
           PYEOF
 
-      # ---- 7. Info.plist আপডেট -------------------------------------------
+      # ---- 7. Info.plist আপডেট (Python, PlistBuddy নয়) --------------------
       - name: Set editor launch arguments (Info.plist)
         run: |
           set -e
-          PLIST="$APP_DIR/godot_apple_embedded/godot_apple_embedded-Info.plist"
-          /usr/libexec/PlistBuddy -c "Add :godot_editor_bootstrap_project string demo_project" "$PLIST"
-          /usr/libexec/PlistBuddy -c "Add :godot_cmdline array" "$PLIST"
-          /usr/libexec/PlistBuddy -c "Add :godot_cmdline:0 string --editor" "$PLIST"
-          /usr/libexec/PlistBuddy -c "Add :godot_cmdline:1 string --single-window" "$PLIST"
-          /usr/libexec/PlistBuddy -c "Add :godot_cmdline:2 string --path" "$PLIST"
-          /usr/libexec/PlistBuddy -c "Add :godot_cmdline:3 string \$DOCS/demo_project" "$PLIST"
+          python3 << 'PYEOF'
+          import plistlib, os
+
+          plist_path = "ios_app/godot_apple_embedded/godot_apple_embedded-Info.plist"
+          with open(plist_path, "rb") as f:
+              pl = plistlib.load(f)
+
+          pl["godot_editor_bootstrap_project"] = "demo_project"
+          pl["godot_cmdline"] = ["--editor", "--single-window", "--path", "$DOCS/demo_project"]
+
+          with open(plist_path, "wb") as f:
+              plistlib.dump(pl, f)
+          print("✅ Info.plist updated with editor arguments.")
+          PYEOF
 
       # ---- 8. অ্যাপ আইকন -------------------------------------------------
       - name: Generate app icon
