@@ -1,18 +1,17 @@
 # =====================================================================
 # Godot Editor for iOS — GitHub Actions workflow (Unsigned IPA Builder)
-# VERSION: Godot 4.2-stable
-# FIXED VERSION — all problems solved
+# VERSION: Godot 4.6-stable
+# 
+# iPad/iPhone-এ চালানোর জন্য Godot editor-এর unsigned IPA বিল্ড করে।
+# এটা কোনো টেম্পলেট নয়। গেম ক্রিয়েট, এডিট, বিল্ড, এক্সপোর্ট করতে পারবে।
 #
-# Builds an unsigned IPA of the Godot editor to run on iPad/iPhone.
-# Not a template – you can create, edit, build, and export games.
-#
-# Usage:
-#   1. Put this file in your repo: .github/workflows/godot-ios-editor.yml
+# ব্যাবহার:
+#   1. এই ফাইলটা আপনার repo-তে রাখুন: .github/workflows/godot-ios-editor.yml
 #   2. GitHub → Actions → "Godot iOS Editor (IPA)" → Run workflow
-#   3. After the run, download GodotEditor-iOS-ipa from Artifacts
-#   4. Install the IPA with AltStore / SideStore / Sideloadly / TrollStore
+#   3. Run শেষ হলে Artifacts থেকে GodotEditor-iOS-ipa ডাউনলোড করুন
+#   4. IPA টা AltStore / SideStore / Sideloadly / TrollStore দিয়ে install করুন
 #
-# Warning: Do not break the indentation (spaces) or the engine patch's TABs.
+# সতর্কতা: ফাইলের indentation (space) আর engine patch-এর TAB নষ্ট করবেন না।
 # =====================================================================
 
 name: Godot iOS Editor (IPA)
@@ -21,21 +20,17 @@ on:
   workflow_dispatch:
     inputs:
       godot_ref:
-        description: "Godot tag/branch (e.g. 4.2-stable, 4.3-stable, 4.4-stable)"
+        description: "Godot tag/branch (e.g. 4.6-stable, 4.6.3-stable)"
         required: true
-        default: "4.7-stable"
+        default: "4.6-stable"
 
 env:
   GODOT_REF: ${{ inputs.godot_ref }}
   APP_DIR: ios_app
-  # Keep the template's default name – renaming confuses Xcode
   BINARY: godot_apple_embedded
-  # Display name
   APP_NAME: Godot Editor
-  # iOS version
   IOS_VERSION: "15.0"
-  # Godot version (for Info.plist)
-  GODOT_VERSION: "4.7"
+  GODOT_VERSION: "4.6"
 
 jobs:
   build:
@@ -45,7 +40,7 @@ jobs:
 
     steps:
       # ------------------------------------------------------------------
-      # Step 1: Install tools
+      # Step 1: টুলস ইনস্টল
       # ------------------------------------------------------------------
       - name: Prepare tools
         run: |
@@ -60,7 +55,7 @@ jobs:
           xcrun --show-sdk-path
 
       # ------------------------------------------------------------------
-      # Step 2: Clone Godot source
+      # Step 2: Godot সোর্স ক্লোন
       # ------------------------------------------------------------------
       - name: Clone Godot source
         run: |
@@ -70,22 +65,22 @@ jobs:
           ls -la godot/
 
       # ------------------------------------------------------------------
-      # Step 2.5: Check apple_embedded support
+      # Step 2.5: চেক — apple_embedded প্ল্যাটফরম আছে কিনা
       # ------------------------------------------------------------------
       - name: Check apple_embedded support
         run: |
           set -e
           echo "=== Checking apple_embedded support ==="
-
+          
           if [ -d "godot/drivers/apple_embedded" ]; then
             echo "✅ drivers/apple_embedded EXISTS"
           else
-            echo "❌ drivers/apple_embedded NOT FOUND"
+            echo "⚠️ drivers/apple_embedded NOT FOUND"
             echo "WARNING: This Godot version may not support iOS editor builds."
             echo "iOS editor (apple_embedded) is typically available in Godot 4.3+."
             echo "If build fails, try using 4.3-stable or later."
           fi
-
+          
           if [ -d "godot/misc/dist/apple_embedded_xcode" ]; then
             echo "✅ misc/dist/apple_embedded_xcode EXISTS"
           else
@@ -94,16 +89,16 @@ jobs:
             echo "Please use Godot 4.3-stable or later."
             exit 1
           fi
-
+          
           echo "=== Checking platform/ios for editor target ==="
           if grep -q "editor" godot/platform/ios/SCsub 2>/dev/null || grep -q "editor" godot/platform/ios/detect.py 2>/dev/null; then
             echo "✅ iOS editor target appears to be supported"
           else
-            echo "⚠️  Could not verify iOS editor target support"
+            echo "⚠️ Could not verify iOS editor target support"
           fi
 
       # ------------------------------------------------------------------
-      # Step 3: Patch engine – boot straight into editor + Documents hack
+      # Step 3: ইঞ্জিন প্যাচ — এডিটর মোডে বুট করবে + Documents ডিরেক্টরি হ্যাক
       # ------------------------------------------------------------------
       - name: Patch engine (boot straight into editor)
         working-directory: godot
@@ -111,11 +106,11 @@ jobs:
           set -e
           cat > /tmp/patch_engine.py << 'SCRIPT_EOF'
           import os
+          import re
 
           filepath = "drivers/apple_embedded/main_utilities.mm"
           if not os.path.exists(filepath):
-              print(f"WARNING: {filepath} not found. Trying alternatives...")
-              # Try alternative paths
+              print("WARNING: " + filepath + " not found. Trying alternatives...")
               alternatives = [
                   "platform/ios/godot_app_delegate.mm",
                   "platform/ios/main.mm",
@@ -124,7 +119,7 @@ jobs:
               for alt in alternatives:
                   if os.path.exists(alt):
                       filepath = alt
-                      print(f"Using alternative: {filepath}")
+                      print("Using alternative: " + filepath)
                       break
               else:
                   print("WARNING: No suitable file found for patching. Skipping patch.")
@@ -138,43 +133,39 @@ jobs:
               print("Already patched, skipping.")
               exit(0)
 
-          # Find a good include line to add after
           include_line = None
           for inc in ['#include <cstdio>', '#include <stdlib.h>', '#include <string.h>', '#include <stdio.h>']:
               if inc in content:
                   include_line = inc
                   break
-
+          
           if include_line is None:
-              print(f"WARNING: Could not find standard include in {filepath}")
-              # Add at top
-              content = '#include <cstdio>
-          ' + content
+              print("WARNING: Could not find standard include in " + filepath)
+              content = '#include <cstdio>\n' + content
               include_line = '#include <cstdio>'
 
-          new_code = '
-          '.join([
+          new_code = '\n'.join([
               '',
               'static NSString *godot_documents_dir(void) {',
-              '	return [NSSearchPathForDirectoriesInDomains(NSDocumentDirectory, NSUserDomainMask, YES) firstObject];',
+              '\treturn [NSSearchPathForDirectoriesInDomains(NSDocumentDirectory, NSUserDomainMask, YES) firstObject];',
               '}',
               '',
               '// Copies the project bundled inside the .app to the writable Documents',
               '// directory on first launch, so the editor can open it (iOS sandbox hack).',
               'static void godot_bootstrap_project(void) {',
-              '	NSString *proj = [[[NSBundle mainBundle] infoDictionary] objectForKey:@"godot_editor_bootstrap_project"];',
-              '	if (!proj || [proj length] == 0) {',
-              '		return;',
-              '	}',
-              '	NSFileManager *fm = [NSFileManager defaultManager];',
-              '	NSString *dst = [godot_documents_dir() stringByAppendingPathComponent:proj];',
-              '	if ([fm fileExistsAtPath:dst]) {',
-              '		return;',
-              '	}',
-              '	NSString *src = [[NSBundle mainBundle] pathForResource:proj ofType:nil];',
-              '	if (src) {',
-              '		[fm copyItemAtPath:src toPath:dst error:nil];',
-              '	}',
+              '\tNSString *proj = [[[NSBundle mainBundle] infoDictionary] objectForKey:@"godot_editor_bootstrap_project"];',
+              '\tif (!proj || [proj length] == 0) {',
+              '\t\treturn;',
+              '\t}',
+              '\tNSFileManager *fm = [NSFileManager defaultManager];',
+              '\tNSString *dst = [godot_documents_dir() stringByAppendingPathComponent:proj];',
+              '\tif ([fm fileExistsAtPath:dst]) {',
+              '\t\treturn;',
+              '\t}',
+              '\tNSString *src = [[NSBundle mainBundle] pathForResource:proj ofType:nil];',
+              '\tif (src) {',
+              '\t\t[fm copyItemAtPath:src toPath:dst error:nil];',
+              '\t}',
               '}',
               ''
           ])
@@ -182,32 +173,23 @@ jobs:
           if include_line in content:
               content = content.replace(include_line, include_line + new_code)
           else:
-              content = new_code + '
-          ' + content
-
-          # Find process_args or main function to inject bootstrap call
-          import re
+              content = new_code + '\n' + content
 
           old_process = "int process_args(int p_argc, char **p_args, char **r_args) {"
-          new_process = "int process_args(int p_argc, char **p_args, char **r_args) {
-          godot_bootstrap_project();"
+          new_process = "int process_args(int p_argc, char **p_args, char **r_args) {\n\tgodot_bootstrap_project();"
 
           if old_process in content:
               content = content.replace(old_process, new_process)
               print("Patched process_args")
           else:
-              # Try to find main and inject there
               main_pattern = r'int\s+main\s*\(\s*int\s+argc\s*,\s*char\s*\*\*\s*argv\s*\)'
               if re.search(main_pattern, content):
-                  content = re.sub(main_pattern, lambda m: m.group(0) + ' {
-          godot_bootstrap_project();', content, count=1)
+                  content = re.sub(main_pattern, lambda m: m.group(0) + ' {\n\tgodot_bootstrap_project();', content, count=1)
                   print("Patched main()")
               else:
                   print("WARNING: Could not find injection point. Bootstrap may not work.")
 
-          # Add $DOCS/ expansion
-          lines = content.split('
-          ')
+          lines = content.split('\n')
           new_lines = []
           i = 0
           while i < len(lines):
@@ -217,11 +199,10 @@ jobs:
                   indent = line[:len(line) - len(line.lstrip())]
                   new_lines.insert(-1, indent + "// Expand $DOCS/ to the app's writable Documents directory.")
                   new_lines.insert(-1, indent + 'if ([str hasPrefix:@"$DOCS/"]) {')
-                  new_lines.insert(-1, indent + '	str = [godot_documents_dir() stringByAppendingPathComponent:[str substringFromIndex:6]];')
+                  new_lines.insert(-1, indent + '\tstr = [godot_documents_dir() stringByAppendingPathComponent:[str substringFromIndex:6]];')
                   new_lines.insert(-1, indent + '}')
               i += 1
-          content = '
-          '.join(new_lines)
+          content = '\n'.join(new_lines)
 
           with open(filepath, "w") as f:
               f.write(content)
@@ -230,14 +211,12 @@ jobs:
           python3 /tmp/patch_engine.py
 
       # ------------------------------------------------------------------
-      # Step 4: Compile Godot editor library (iOS arm64)
+      # Step 4: Godot এডিটর লাইব্রেরি কম্পাইল (iOS arm64)
       # ------------------------------------------------------------------
       - name: Compile Godot editor library (iOS arm64)
         working-directory: godot
         run: |
           set -e
-          # Keep vulkan=no – we need to build without MoltenVK
-          # Must use Compatibility renderer (OpenGL ES)
           scons platform=ios target=editor arch=arm64 vulkan=no debug_symbols=no -j"$(sysctl -n hw.logicalcpu)"
           echo "=== Compiled binaries ==="
           ls -lh bin/
@@ -245,24 +224,23 @@ jobs:
           file bin/*.a || true
 
       # ------------------------------------------------------------------
-      # Step 5: Assemble Xcode project with editor library
+      # Step 5: Xcode প্রোজেক্ট অ্যাসেম্বল
       # ------------------------------------------------------------------
       - name: Assemble Xcode project with editor library
         run: |
           set -e
           LIB="$(ls godot/bin/libgodot.ios.editor.arm64*.a | head -n1)"
           echo "Editor library: $LIB"
-
-          # Copy template
+          
           cp -R "godot/misc/dist/apple_embedded_xcode" "$APP_DIR"
-
-          # Remove xcframeworks for other platforms
-          rm -rf "$APP_DIR"/libgodot.visionos.*.xcframework                  "$APP_DIR"/libgodot_camera.visionos.*.xcframework                  "$APP_DIR"/libgodot_camera.ios.*.xcframework
-
-          # Also remove iOS debug/release xcframeworks – we'll build our own
-          rm -rf "$APP_DIR"/libgodot.ios.debug.xcframework                  "$APP_DIR"/libgodot.ios.release.xcframework
-
-          # Create new godot.xcframework (arm64 only)
+          
+          rm -rf "$APP_DIR"/libgodot.visionos.*.xcframework \
+                 "$APP_DIR"/libgodot_camera.visionos.*.xcframework \
+                 "$APP_DIR"/libgodot_camera.ios.*.xcframework
+          
+          rm -rf "$APP_DIR"/libgodot.ios.debug.xcframework \
+                 "$APP_DIR"/libgodot.ios.release.xcframework
+          
           mkdir -p "$APP_DIR/godot.xcframework/ios-arm64"
           cp "$LIB" "$APP_DIR/godot.xcframework/ios-arm64/libgodot.a"
           cat > "$APP_DIR/godot.xcframework/Info.plist" << 'XCF_EOF'
@@ -270,95 +248,94 @@ jobs:
           <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
           <plist version="1.0">
           <dict>
-            <key>AvailableLibraries</key>
-            <array>
-              <dict>
-                <key>LibraryIdentifier</key>
-                <string>ios-arm64</string>
-                <key>LibraryPath</key>
-                <string>libgodot.a</string>
-                <key>SupportedArchitectures</key>
-                <array>
-                  <string>arm64</string>
-                </array>
-                <key>SupportedPlatform</key>
-                <string>ios</string>
-              </dict>
-            </array>
-            <key>CFBundlePackageType</key>
-            <string>XFWK</string>
-            <key>XCFrameworkFormatVersion</key>
-            <string>1.0</string>
+          	<key>AvailableLibraries</key>
+          	<array>
+          		<dict>
+          			<key>LibraryIdentifier</key>
+          			<string>ios-arm64</string>
+          			<key>LibraryPath</key>
+          			<string>libgodot.a</string>
+          			<key>SupportedArchitectures</key>
+          			<array>
+          				<string>arm64</string>
+          			</array>
+          			<key>SupportedPlatform</key>
+          			<string>ios</string>
+          		</dict>
+          	</array>
+          	<key>CFBundlePackageType</key>
+          	<string>XFWK</string>
+          	<key>XCFrameworkFormatVersion</key>
+          	<string>1.0</string>
           </dict>
           </plist>
           XCF_EOF
-
-          # Rename data.pck to the template's default name
+          
           if [ -f "$APP_DIR/data.pck" ]; then
             mv "$APP_DIR/data.pck" "$APP_DIR/${BINARY}.pck"
           fi
-
-          # Create dylibs directory (if the template references it)
+          
           mkdir -p "$APP_DIR/dylibs"
           touch "$APP_DIR/dylibs/.gitkeep"
-
-          # Dummy MoltenVK.xcframework – avoids Xcode linking errors
-          # Built with vulkan=no, so real MoltenVK isn't needed
+          
           echo "=== Creating dummy MoltenVK.xcframework ==="
           mkdir -p "$APP_DIR/MoltenVK.xcframework/ios-arm64"
-
-          # Create a minimal static library
+          
           cat > /tmp/moltenvk_dummy.c << 'C_EOF'
           void mvkDummySymbol(void) {}
           C_EOF
-          clang -c /tmp/moltenvk_dummy.c -o /tmp/moltenvk_dummy.o             -arch arm64             -isysroot "$(xcrun --sdk iphoneos --show-sdk-path)"
+          clang -c /tmp/moltenvk_dummy.c -o /tmp/moltenvk_dummy.o \
+            -arch arm64 \
+            -isysroot "$(xcrun --sdk iphoneos --show-sdk-path)"
           ar rcs "$APP_DIR/MoltenVK.xcframework/ios-arm64/libMoltenVK.a" /tmp/moltenvk_dummy.o
-
+          
           cat > "$APP_DIR/MoltenVK.xcframework/Info.plist" << 'MVK_EOF'
           <?xml version="1.0" encoding="UTF-8"?>
           <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
           <plist version="1.0">
           <dict>
-            <key>AvailableLibraries</key>
-            <array>
-              <dict>
-                <key>LibraryIdentifier</key>
-                <string>ios-arm64</string>
-                <key>LibraryPath</key>
-                <string>libMoltenVK.a</string>
-                <key>SupportedArchitectures</key>
-                <array>
-                  <string>arm64</string>
-                </array>
-                <key>SupportedPlatform</key>
-                <string>ios</string>
-              </dict>
-            </array>
-            <key>CFBundlePackageType</key>
-            <string>XFWK</string>
-            <key>XCFrameworkFormatVersion</key>
-            <string>1.0</string>
+          	<key>AvailableLibraries</key>
+          	<array>
+          		<dict>
+          			<key>LibraryIdentifier</key>
+          			<string>ios-arm64</string>
+          			<key>LibraryPath</key>
+          			<string>libMoltenVK.a</string>
+          			<key>SupportedArchitectures</key>
+          			<array>
+          				<string>arm64</string>
+          			</array>
+          			<key>SupportedPlatform</key>
+          			<string>ios</string>
+          		</dict>
+          	</array>
+          	<key>CFBundlePackageType</key>
+          	<string>XFWK</string>
+          	<key>XCFrameworkFormatVersion</key>
+          	<string>1.0</string>
           </dict>
           </plist>
           MVK_EOF
-
+          
           echo "=== Xcode project structure ==="
           find "$APP_DIR" -maxdepth 2 -type f | head -30
 
       # ------------------------------------------------------------------
-      # Step 6: Fill template placeholders – COMPREHENSIVE
+      # Step 6: টেম্পলেট প্লেসহোল্ডার রিপ্লেস — কম্প্রিহেনসিভ
       # ------------------------------------------------------------------
       - name: Fill template placeholders (COMPREHENSIVE)
         run: |
           set -e
           python3 << 'PYEOF'
-          import os, re, pathlib, shutil
+          import os
+          import re
+          import pathlib
 
           APP = "ios_app"
           BINARY = os.environ.get("BINARY", "godot_apple_embedded")
           APP_NAME = os.environ.get("APP_NAME", "Godot Editor")
           IOS_VER = os.environ.get("IOS_VERSION", "15.0")
-          GODOT_VER = os.environ.get("GODOT_VERSION", "4.2")
+          GODOT_VER = os.environ.get("GODOT_VERSION", "4.6")
 
           def safe_read_text(path):
               try:
@@ -371,85 +348,60 @@ jobs:
                   path.write_text(content, encoding="utf-8")
                   return True
               except Exception as e:
-                  print(f"ERROR writing {path}: {e}")
+                  print("ERROR writing " + str(path) + ": " + str(e))
                   return False
 
-          # DEBUG: List all files
           print("=== DEBUG: Files in ios_app ===")
           for p in sorted(pathlib.Path(APP).rglob("*")):
               if p.is_file():
-                  print(f"  {p}")
+                  print("  " + str(p))
           print("=== END DEBUG ===")
 
-          # =====================================================================
-          # Step 1: Known replacements on text files
-          # =====================================================================
           R = [
-              # Core identifiers
               ("$binary", BINARY),
               ("$name", APP_NAME),
               ("$godot_name", APP_NAME),
               ("$godot_binary", BINARY),
               ("$godot_path", BINARY),
-
-              # Versions
               ("$short_version", GODOT_VER),
               ("$version", GODOT_VER),
               ("$min_version", IOS_VER),
-
-              # Launch Screen
               ("$pbx_launch_screen_file_reference", 'D0BCFEAA18AEBDA2004A7AAE /* Launch Screen.storyboard */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = file.storyboard; path = "Launch Screen.storyboard"; sourceTree = "<group>"; };'),
               ("$pbx_launch_screen_copy_files", "D0BCFEAA18AEBDA2004A7AAE /* Launch Screen.storyboard */,"),
               ("$pbx_launch_screen_build_phase", "D0BCFEAB18AEBDA2004A7AAE /* Launch Screen.storyboard in Resources */,"),
               ("$pbx_launch_screen_build_reference", "D0BCFEAB18AEBDA2004A7AAE /* Launch Screen.storyboard in Resources */ = {isa = PBXBuildFile; fileRef = D0BCFEAA18AEBDA2004A7AAE /* Launch Screen.storyboard */; };"),
-              ("$plist_launch_screen_name", f"<key>UILaunchStoryboardName</key>\n\t<string>Launch Screen</string>"),
+              ("$plist_launch_screen_name", "<key>UILaunchStoryboardName</key>\n\t<string>Launch Screen</string>"),
               ("$launch_screen_image_mode", "center"),
               ("$launch_screen_background_color", 'red="0.10" green="0.11" blue="0.14" alpha="1"'),
-
-              # MoltenVK (keep references since we created dummy framework)
               ("$moltenvk_buildfile", "9039D3BE24C093AC0020482C /* MoltenVK.xcframework in Frameworks */,"),
               ("$moltenvk_fileref", "9039D3BD24C093AC0020482C /* MoltenVK.xcframework */,"),
               ("$moltenvk_buildphase", "9039D3BE24C093AC0020482C /* MoltenVK.xcframework in Frameworks */,"),
               ("$moltenvk_buildgrp", "9039D3BD24C093AC0020482C /* MoltenVK.xcframework */,"),
-
-              # Modules (none for basic editor)
               ("$modules_buildfile", ""),
               ("$modules_fileref", ""),
               ("$modules_buildphase", ""),
               ("$modules_buildgrp", ""),
-
-              # Swift runtime (none for basic build)
               ("$swift_runtime_buildfile", ""),
               ("$swift_runtime_fileref", ""),
               ("$swift_runtime_migration", ""),
               ("$swift_runtime_binary_files", ""),
               ("$swift_runtime_build_settings", ""),
               ("$swift_runtime_build_phase", ""),
-
-              # Additional files/frameworks/resources
               ("$additional_pbx_files", ""),
               ("$additional_pbx_frameworks_build", ""),
               ("$additional_pbx_frameworks_refs", ""),
               ("$additional_pbx_resources_refs", ""),
               ("$additional_pbx_resources_build", ""),
-
-              # Locale
               ("$pbx_locale_file_reference", ""),
               ("$pbx_locale_build_reference", ""),
-
-              # Embedded frameworks
               ("$pbx_embeded_frameworks", ""),
-
-              # Build settings
-              ("$os_deployment_target", f"IPHONEOS_DEPLOYMENT_TARGET = {IOS_VER};"),
+              ("$os_deployment_target", "IPHONEOS_DEPLOYMENT_TARGET = " + IOS_VER + ";"),
               ("$targeted_device_family", "1,2"),
               ("$valid_archs", "arm64"),
               ("$godot_archs", "arm64"),
               ("$linker_flags", ""),
               ("$sdkroot", "iphoneos"),
               ("$team_id", ""),
-
-              # Code signing (unsigned)
               ("$code_sign_identity_debug", ""),
               ("$code_sign_identity_release", ""),
               ("$code_sign_style_debug", "Manual"),
@@ -458,19 +410,13 @@ jobs:
               ("$provisioning_profile_uuid_release", ""),
               ("$provisioning_profile_specifier_debug", ""),
               ("$provisioning_profile_specifier_release", ""),
-
-              # Bundle ID
               ("$bundle_identifier", "org.godotengine.ioseditor"),
               ("$plist_bundle_identifier", "org.godotengine.ioseditor"),
               ("$plist_bundle_name", APP_NAME),
               ("$plist_bundle_display_name", APP_NAME),
               ("$plist_bundle_version", GODOT_VER),
               ("$plist_bundle_short_version", GODOT_VER),
-
-              # Signature
               ("$signature", "????"),
-
-              # Capabilities & permissions
               ("$docs_in_place", "<true/>"),
               ("$docs_sharing", "<true/>"),
               ("$required_device_capabilities", "<string>arm64</string>"),
@@ -504,14 +450,11 @@ jobs:
               if t != o:
                   safe_write_text(p, t)
                   changed += 1
-          print(f"Known placeholder-processed files: {changed}")
+          print("Known placeholder-processed files: " + str(changed))
 
-          # =====================================================================
-          # Step 2: AGGRESSIVE – find ALL $word patterns and handle them
-          # =====================================================================
           total_blanked = 0
           total_replaced = 0
-
+          
           for p in pathlib.Path(APP).rglob("*"):
               if not p.is_file():
                   continue
@@ -519,23 +462,17 @@ jobs:
               if t is None:
                   continue
               o = t
-
-              # Find all $word placeholders
+              
               placeholders = set(re.findall(r'\$[a-zA-Z_][a-zA-Z0-9_]{2,}', t))
-
+              
               for ph in placeholders:
-                  # Check if this placeholder appears in a "safe" context
-                  # (standalone line with underscores around it in pbxproj)
                   standalone_pattern = re.compile(r'^\s*_' + re.escape(ph) + r'_\s*$', re.MULTILINE)
-
+                  
                   if standalone_pattern.search(t):
-                      # Safe to blank – it's a standalone entry
                       t = t.replace(ph, "")
                       total_blanked += 1
-                      print(f"  BLANKED: {ph} in {p.name}")
+                      print("  BLANKED: " + ph + " in " + p.name)
                   else:
-                      # Appears inline – replace with safe default
-                      # Determine context and choose appropriate replacement
                       if "version" in ph.lower():
                           t = t.replace(ph, GODOT_VER)
                       elif "ident" in ph.lower() or "bundle" in ph.lower():
@@ -553,38 +490,33 @@ jobs:
                       else:
                           t = t.replace(ph, "")
                       total_replaced += 1
-                      print(f"  REPLACED: {ph} in {p.name} (inline)")
-
+                      print("  REPLACED: " + ph + " in " + p.name + " (inline)")
+              
               if t != o:
                   safe_write_text(p, t)
 
-          print(f"Total placeholders blanked: {total_blanked}")
-          print(f"Total placeholders replaced inline: {total_replaced}")
+          print("Total placeholders blanked: " + str(total_blanked))
+          print("Total placeholders replaced inline: " + str(total_replaced))
 
-          # =====================================================================
-          # Step 3: Verify .pbxproj is clean
-          # =====================================================================
-          pbxproj_path = pathlib.Path(APP) / f"{BINARY}.xcodeproj" / "project.pbxproj"
+          pbxproj_path = pathlib.Path(APP) / (BINARY + ".xcodeproj") / "project.pbxproj"
           if pbxproj_path.exists():
               content = safe_read_text(pbxproj_path)
               if content:
                   remaining = re.findall(r'\$[a-zA-Z_][a-zA-Z0-9_]{2,}', content)
                   if remaining:
-                      print(f"WARNING: {len(remaining)} placeholders still in .pbxproj: {remaining[:20]}")
-                      # Don't exit – try to build anyway
+                      print("WARNING: " + str(len(remaining)) + " placeholders still in .pbxproj: " + str(remaining[:20]))
                   else:
                       print("VERIFIED: .pbxproj is clean - no placeholders remaining!")
               else:
                   print("WARNING: Could not read .pbxproj for verification")
           else:
-              print(f"WARNING: .pbxproj not found at {pbxproj_path}")
-              # Try to find it
+              print("WARNING: .pbxproj not found at " + str(pbxproj_path))
               for p in pathlib.Path(APP).rglob("*.pbxproj"):
-                  print(f"  Found .pbxproj at: {p}")
+                  print("  Found .pbxproj at: " + str(p))
           PYEOF
 
       # ------------------------------------------------------------------
-      # Step 7: DEBUG – Check project structure
+      # Step 7: DEBUG — প্রোজেক্ট স্ট্রাকচার চেক
       # ------------------------------------------------------------------
       - name: DEBUG - Check .xcodeproj structure
         run: |
@@ -623,7 +555,7 @@ jobs:
           echo "=== END DEBUG ==="
 
       # ------------------------------------------------------------------
-      # Step 8: Set editor launch arguments in Info.plist
+      # Step 8: Info.plist-এ এডিটর লঞ্চ আর্গুমেন্ট সেট
       # ------------------------------------------------------------------
       - name: Set editor launch arguments (Info.plist)
         run: |
@@ -634,20 +566,25 @@ jobs:
             find "$APP_DIR" -name "*-Info.plist" -type f
             exit 1
           fi
-
-          /usr/libexec/PlistBuddy -c "Add :godot_editor_bootstrap_project string demo_project" "$PLIST" ||             /usr/libexec/PlistBuddy -c "Set :godot_editor_bootstrap_project demo_project" "$PLIST"
-
+          
+          /usr/libexec/PlistBuddy -c "Add :godot_editor_bootstrap_project string demo_project" "$PLIST" || \
+            /usr/libexec/PlistBuddy -c "Set :godot_editor_bootstrap_project demo_project" "$PLIST"
+          
           /usr/libexec/PlistBuddy -c "Add :godot_cmdline array" "$PLIST" || true
-          /usr/libexec/PlistBuddy -c "Add :godot_cmdline:0 string --editor" "$PLIST" ||             /usr/libexec/PlistBuddy -c "Set :godot_cmdline:0 --editor" "$PLIST"
-          /usr/libexec/PlistBuddy -c "Add :godot_cmdline:1 string --single-window" "$PLIST" ||             /usr/libexec/PlistBuddy -c "Set :godot_cmdline:1 --single-window" "$PLIST"
-          /usr/libexec/PlistBuddy -c "Add :godot_cmdline:2 string --path" "$PLIST" ||             /usr/libexec/PlistBuddy -c "Set :godot_cmdline:2 --path" "$PLIST"
-          /usr/libexec/PlistBuddy -c "Add :godot_cmdline:3 string \$DOCS/demo_project" "$PLIST" ||             /usr/libexec/PlistBuddy -c "Set :godot_cmdline:3 \$DOCS/demo_project" "$PLIST"
-
+          /usr/libexec/PlistBuddy -c "Add :godot_cmdline:0 string --editor" "$PLIST" || \
+            /usr/libexec/PlistBuddy -c "Set :godot_cmdline:0 --editor" "$PLIST"
+          /usr/libexec/PlistBuddy -c "Add :godot_cmdline:1 string --single-window" "$PLIST" || \
+            /usr/libexec/PlistBuddy -c "Set :godot_cmdline:1 --single-window" "$PLIST"
+          /usr/libexec/PlistBuddy -c "Add :godot_cmdline:2 string --path" "$PLIST" || \
+            /usr/libexec/PlistBuddy -c "Set :godot_cmdline:2 --path" "$PLIST"
+          /usr/libexec/PlistBuddy -c "Add :godot_cmdline:3 string \$DOCS/demo_project" "$PLIST" || \
+            /usr/libexec/PlistBuddy -c "Set :godot_cmdline:3 \$DOCS/demo_project" "$PLIST"
+          
           echo "Launch arguments set. Contents:"
           cat "$PLIST"
 
       # ------------------------------------------------------------------
-      # Step 9: Create bundled demo project
+      # Step 9: বান্ডেলড ডেমো প্রোজেক্ট তৈরি
       # ------------------------------------------------------------------
       - name: Create bundled demo project
         run: |
@@ -655,57 +592,53 @@ jobs:
           mkdir -p demo_project
           cat > demo_project/project.godot << 'PG_EOF'
           ; Engine Configuration File.
-          ; It's best edited using the editor UI and not directly.
-
+          ; It\'s best edited using the editor UI and not directly.
+          
           config_version=5
-
+          
           [application]
-
+          
           config/name="iOS Demo"
           run/main_scene="res://main.tscn"
-
+          
           [rendering]
-
+          
           renderer/rendering_method="mobile"
           PG_EOF
-
+          
           cat > demo_project/main.tscn << 'TSCN_EOF'
           [gd_scene format=3]
-
+          
           [node name="Main" type="Node2D"]
-
+          
           [node name="Label" type="Label" parent="."]
           offset_left = 60.0
           offset_top = 60.0
           theme_override_font_sizes/font_size = 40
           text = "Godot iOS Editor is working!"
           TSCN_EOF
-
+          
           echo "Demo project created."
           ls -la demo_project/
 
       # ------------------------------------------------------------------
-      # Step 10: Generate app icon
+      # Step 10: অ্যাপ আইকন জেনারেট
       # ------------------------------------------------------------------
       - name: Generate app icon
         run: |
           set -e
           python3 << 'PYEOF'
-          import os, json
+          import os
+          import json
           from PIL import Image, ImageDraw
 
-          # Create AppIcon.appiconset inside template's Images.xcassets
-          base = f"ios_app/{os.environ.get('BINARY', 'godot_apple_embedded')}/Images.xcassets/AppIcon.appiconset"
+          base = "ios_app/" + os.environ.get("BINARY", "godot_apple_embedded") + "/Images.xcassets/AppIcon.appiconset"
           os.makedirs(base, exist_ok=True)
 
-          # Godot blue background with white circle icon
           img = Image.new("RGB", (1024, 1024), (71, 140, 191))
           d = ImageDraw.Draw(img)
-          # Big white circle
           d.ellipse([212, 212, 812, 812], fill=(255, 255, 255))
-          # Small blue circle (like Godot's)
           d.ellipse([402, 402, 622, 622], fill=(71, 140, 191))
-          # Two eye-like dots
           d.ellipse([450, 460, 490, 500], fill=(255, 255, 255))
           d.ellipse([534, 460, 574, 500], fill=(255, 255, 255))
           img.save(os.path.join(base, "icon_1024.png"))
@@ -726,29 +659,42 @@ jobs:
           }
           with open(os.path.join(base, "Contents.json"), "w") as f:
               json.dump(contents, f, indent=2)
-
-          print(f"AppIcon.appiconset ready at: {base}")
+          
+          print("AppIcon.appiconset ready at: " + base)
           PYEOF
 
       # ------------------------------------------------------------------
-      # Step 11: Build .app with Xcode (unsigned)
+      # Step 11: Xcode দিয়ে .app বিল্ড (আনসাইন্ড)
       # ------------------------------------------------------------------
       - name: Build .app with Xcode (unsigned)
         run: |
           set -e
           echo "=== Starting Xcode build ==="
-
-          # First, list available schemes
+          
           echo "=== Available schemes ==="
           xcodebuild -project "$APP_DIR/${BINARY}.xcodeproj" -list || true
-
-          # Build
-          xcodebuild             -project "$APP_DIR/${BINARY}.xcodeproj"             -scheme "$BINARY"             -configuration Release             -sdk iphoneos             -destination "generic/platform=iOS"             -derivedDataPath "$APP_DIR/dd"             CODE_SIGNING_ALLOWED=NO             CODE_SIGNING_REQUIRED=NO             CODE_SIGN_IDENTITY=""             DEVELOPMENT_TEAM=""             PROVISIONING_PROFILE=""             PROVISIONING_PROFILE_SPECIFIER=""             VALIDATE_PRODUCT=NO             ONLY_ACTIVE_ARCH=YES             ARCHS=arm64             build
-
+          
+          xcodebuild \
+            -project "$APP_DIR/${BINARY}.xcodeproj" \
+            -scheme "$BINARY" \
+            -configuration Release \
+            -sdk iphoneos \
+            -destination "generic/platform=iOS" \
+            -derivedDataPath "$APP_DIR/dd" \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            DEVELOPMENT_TEAM="" \
+            PROVISIONING_PROFILE="" \
+            PROVISIONING_PROFILE_SPECIFIER="" \
+            VALIDATE_PRODUCT=NO \
+            ONLY_ACTIVE_ARCH=YES \
+            ARCHS=arm64 \
+            build
+          
           echo "=== Build products ==="
           ls -lh "$APP_DIR/dd/Build/Products/Release-iphoneos/" || true
-
-          # Verify app path
+          
           APP_PATH="$APP_DIR/dd/Build/Products/Release-iphoneos/${BINARY}.app"
           if [ ! -d "$APP_PATH" ]; then
             echo "ERROR: .app not found at expected path: $APP_PATH"
@@ -758,35 +704,30 @@ jobs:
           echo "App built successfully at: $APP_PATH"
 
       # ------------------------------------------------------------------
-      # Step 12: Package IPA
+      # Step 12: IPA প্যাকেজিং
       # ------------------------------------------------------------------
       - name: Package IPA
         run: |
           set -e
           APP="$APP_DIR/dd/Build/Products/Release-iphoneos/${BINARY}.app"
-
-          # Copy demo project inside the app bundle
+          
           cp -R demo_project "$APP/demo_project"
-
-          # Ad-hoc codesign (needed for unsigned IPA)
+          
           codesign --force --deep --sign - "$APP" 2>/dev/null || echo "ad-hoc codesign skipped"
-
-          # Create Payload directory
+          
           rm -rf Payload && mkdir Payload
           cp -R "$APP" Payload/
-
-          # Zip into IPA
+          
           IPA="GodotEditor-iOS-${GODOT_REF}.ipa"
           zip -qry "$IPA" Payload
-
+          
           echo "=== IPA created ==="
           ls -lh "$IPA"
-
-          # Verify
+          
           unzip -l "$IPA" | head -20
 
       # ------------------------------------------------------------------
-      # Step 13: Upload artifact
+      # Step 13: আর্টিফ্যাক্ট আপলোড
       # ------------------------------------------------------------------
       - name: Upload IPA artifact
         uses: actions/upload-artifact@v4
@@ -796,7 +737,7 @@ jobs:
           retention-days: 14
 
       # ------------------------------------------------------------------
-      # Step 14: Summary
+      # Step 14: সামারি
       # ------------------------------------------------------------------
       - name: Build summary
         run: |
@@ -823,5 +764,5 @@ jobs:
             echo "### ⚠️ Notes"
             echo "- This is an **unsigned** IPA. It requires sideloading."
             echo "- Built with \`vulkan=no\` — use Compatibility renderer (OpenGL ES)."
-            echo "- Re-signs every 7 days with a free Apple ID."
+            echo "- Re-signs every 7 days with free Apple ID."
           } >> "$GITHUB_STEP_SUMMARY"
