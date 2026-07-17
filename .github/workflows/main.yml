@@ -14,7 +14,7 @@ on:
 env:
   GODOT_REF: ${{ inputs.godot_ref }}
   APP_DIR: ios_app
-  BINARY: "Godot Editor"   # Product name (final .app name)
+  BINARY: "Godot Editor"   # final .app name
 
 jobs:
   build:
@@ -23,7 +23,7 @@ jobs:
     timeout-minutes: 300
 
     steps:
-      # ---- 1. Prepare tools -----------------------------------------------
+      # ---- 1. টুলস ইনস্টল -----------------------------------------------
       - name: Prepare tools
         run: |
           set -e
@@ -31,15 +31,15 @@ jobs:
           echo "$PWD/venv/bin" >> $GITHUB_PATH
           source venv/bin/activate
           python3 -m pip install --quiet --upgrade pip
-          python3 -m pip install --quiet scons pillow pbxproj
+          python3 -m pip install --quiet scons pillow
           scons --version | head -n 2
           xcodebuild -version
 
-      # ---- 2. Clone Godot source ------------------------------------------
+      # ---- 2. Godot সোর্স ক্লোন ------------------------------------------
       - name: Clone Godot source
         run: git clone --depth 1 --branch "$GODOT_REF" https://github.com/godotengine/godot.git godot
 
-      # ---- 3. Patch engine (boot into editor) -----------------------------
+      # ---- 3. ইঞ্জিন প্যাচ (বুটে সরাসরি এডিটর) ----------------------------
       - name: Patch engine (boot straight into editor)
         working-directory: godot
         run: |
@@ -106,7 +106,7 @@ jobs:
           SCRIPT_EOF
           python3 /tmp/patch_engine.py
 
-      # ---- 4. Compile Godot editor library --------------------------------
+      # ---- 4. Godot এডিটর লাইব্রেরি কম্পাইল (iOS arm64) --------------------
       - name: Compile Godot editor library (iOS arm64)
         working-directory: godot
         run: |
@@ -114,14 +114,14 @@ jobs:
           scons platform=ios target=editor arch=arm64 vulkan=no debug_symbols=no -j"$(sysctl -n hw.logicalcpu)"
           ls -lh bin/
 
-      # ---- 5. Assemble Xcode project --------------------------------------
+      # ---- 5. Xcode প্রজেক্ট সাজানো --------------------------------------
       - name: Assemble Xcode project with editor library
         run: |
           set -e
           LIB="$(ls godot/bin/libgodot.ios.editor.arm64*.a | head -n1)"
           echo "Editor library: $LIB"
           cp -R "godot/misc/dist/apple_embedded_xcode" "$APP_DIR"
-          # Remove unnecessary xcframeworks
+          # বাদ দেওয়া অপ্রয়োজনীয় xcframework
           rm -rf "$APP_DIR"/libgodot.visionos.debug.xcframework \
                  "$APP_DIR"/libgodot.visionos.release.xcframework \
                  "$APP_DIR"/libgodot_camera.ios.debug.xcframework \
@@ -161,74 +161,143 @@ jobs:
           XCF_EOF
           mv "$APP_DIR/data.pck" "$APP_DIR/godot.pck"
 
-      # ---- 6. Fix Xcode project with pbxproj (NO manual placeholder) ------
-      - name: Repair Xcode project (pbxproj + Info.plist)
+      # ---- 6. placeholder রিপ্লেস (নির্ভুল ও সম্পূর্ণ) --------------------
+      - name: Replace all placeholders (safe, verified)
         run: |
           set -e
           python3 << 'PYEOF'
-          import os, plistlib, shutil
-          from pbxproj import XcodeProject
+          import os, re, pathlib
 
           APP = "ios_app"
-          project_path = os.path.join(APP, "godot_apple_embedded.xcodeproj", "project.pbxproj")
-          project = XcodeProject.load(project_path)
 
-          # --- build settings ---
-          target = project.get_targets()[0]
-          target.set_product_name("Godot Editor")   # PRODUCT_NAME
-          target.set_build_setting("PRODUCT_BUNDLE_IDENTIFIER", "org.godotengine.ioseditor")
-          target.set_build_setting("IPHONEOS_DEPLOYMENT_TARGET", "15.0")
-          target.set_build_setting("TARGETED_DEVICE_FAMILY", "1,2")
-          target.set_build_setting("VALID_ARCHS", "arm64")
-          target.set_build_setting("CODE_SIGN_STYLE", "Manual")
-          target.set_build_setting("CODE_SIGN_IDENTITY", "")
-          target.set_build_setting("DEVELOPMENT_TEAM", "")
-          target.set_build_setting("PROVISIONING_PROFILE_SPECIFIER", "")
-          target.set_build_setting("PROVISIONING_PROFILE", "")
-          target.set_build_setting("CODE_SIGNING_REQUIRED", "NO")
-          target.set_build_setting("CODE_SIGNING_ALLOWED", "NO")
+          # -----------------------------------------------
+          #  সম্পূর্ণ placeholder → valid মান ম্যাপিং
+          # -----------------------------------------------
+          R = {
+              # লঞ্চ স্ক্রিন
+              "$pbx_launch_screen_file_reference":
+                  '90DD2D9D24B36E8000717FE1 /* Launch Screen.storyboard */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = file.storyboard; path = "Launch Screen.storyboard"; sourceTree = "<group>"; };',
+              "$pbx_launch_screen_copy_files":
+                  '90DD2D9D24B36E8000717FE1 /* Launch Screen.storyboard */,',
+              "$pbx_launch_screen_build_phase":
+                  '90DD2D9E24B36E8000717FE1 /* Launch Screen.storyboard in Resources */,',
+              "$pbx_launch_screen_build_reference":
+                  '90DD2D9E24B36E8000717FE1 /* Launch Screen.storyboard in Resources */ = {isa = PBXBuildFile; fileRef = 90DD2D9D24B36E8000717FE1 /* Launch Screen.storyboard */; };',
+              "$plist_launch_screen_name":
+                  '<key>UILaunchStoryboardName</key>\n\t<string>Launch Screen</string>',
+              "$launch_screen_image_mode": "center",
+              "$launch_screen_background_color": 'red="0.10" green="0.11" blue="0.14" alpha="1"',
 
-          # --- remove unused xcframework references ---
-          unused = [
-              "libgodot.ios.debug.xcframework",
-              "libgodot.ios.release.xcframework",
-              "libgodot.visionos.debug.xcframework",
-              "libgodot.visionos.release.xcframework",
-              "libgodot_camera.ios.debug.xcframework",
-              "libgodot_camera.ios.release.xcframework",
-              "libgodot_camera.visionos.debug.xcframework",
-              "libgodot_camera.visionos.release.xcframework",
-          ]
-          for name in unused:
-              for f in project.get_files_by_name(name):
-                  project.remove_file_by_id(f.id)
+              # মলটেনভিকে / মডিউল (খালি)
+              "$moltenvk_buildfile": "", "$moltenvk_fileref": "",
+              "$moltenvk_buildphase": "", "$moltenvk_buildgrp": "",
+              "$modules_buildfile": "", "$modules_fileref": "",
+              "$modules_buildphase": "", "$modules_buildgrp": "",
 
-          # --- add Launch Screen storyboard if missing ---
-          storyboard_path = os.path.join(APP, "godot_apple_embedded", "Launch Screen.storyboard")
-          if os.path.exists(storyboard_path) and not project.get_files_by_name("Launch Screen.storyboard"):
-              project.add_file(storyboard_path, force=False)
+              # অন্যান্য অতিরিক্ত
+              "$additional_pbx_files": "", "$additional_pbx_frameworks_build": "",
+              "$additional_pbx_frameworks_refs": "", "$additional_pbx_resources_refs": "",
+              "$additional_pbx_resources_build": "",
+              "$pbx_locale_file_reference": "", "$pbx_locale_build_reference": "",
+              "$pbx_embeded_frameworks": "",
 
-          project.save()
-          print("Xcode project repaired OK.")
+              # বিল্ড সেটিংস
+              "$os_deployment_target": "IPHONEOS_DEPLOYMENT_TARGET = 15.0;",
+              "$targeted_device_family": "1,2",
+              "$valid_archs": "arm64",
+              "$godot_archs": "arm64",
+              "$linker_flags": "",
+              "$sdkroot": "iphoneos",
+              "$team_id": "",
+              "$code_sign_identity_debug": "", "$code_sign_identity_release": "",
+              "$code_sign_style_debug": "Manual", "$code_sign_style_release": "Manual",
+              "$provisioning_profile_uuid_debug": "", "$provisioning_profile_uuid_release": "",
+              "$provisioning_profile_specifier_debug": "", "$provisioning_profile_specifier_release": "",
+
+              # বান্ডল
+              "$bundle_identifier": "org.godotengine.ioseditor",
+              "$short_version": "4.7.1", "$version": "4.7.1",
+              "$signature": "????",
+              "$docs_in_place": "<true/>", "$docs_sharing": "<true/>",
+              "$required_device_capabilities": "<string>arm64</string>",
+              "$camera_usage_description": "Godot projects can use the camera.",
+              "$photolibrary_usage_description": "Godot projects can use the photo library.",
+              "$microphone_usage_description": "Godot projects can use the microphone.",
+              "$interface_orientations":
+                  "<string>UIInterfaceOrientationPortrait</string>\n\t\t<string>UIInterfaceOrientationPortraitUpsideDown</string>\n\t\t<string>UIInterfaceOrientationLandscapeLeft</string>\n\t\t<string>UIInterfaceOrientationLandscapeRight</string>",
+              "$ipad_interface_orientations":
+                  "<string>UIInterfaceOrientationPortrait</string>\n\t\t<string>UIInterfaceOrientationPortraitUpsideDown</string>\n\t\t<string>UIInterfaceOrientationLandscapeLeft</string>\n\t\t<string>UIInterfaceOrientationLandscapeRight</string>",
+
+              "$additional_plist_content": "",
+              "$entitlements_full": "",
+              "$cpp_code": "",
+
+              # প্রোডাক্ট / বাইনারি
+              "$binary": "Godot Editor",
+              "$name": "Godot Editor",
+              "$godot_path": "Godot Editor",
+              "$godot_name": "Godot Editor",
+              "$godot_binary": "Godot Editor",
+              "$default_build_config": "Release",
+              "$export_method": "development",
+
+              # plist
+              "$plist_bundle_identifier": "org.godotengine.ioseditor",
+              "$plist_bundle_name": "Godot Editor",
+              "$plist_bundle_display_name": "Godot Editor",
+              "$plist_bundle_version": "4.7.1",
+              "$plist_bundle_short_version": "4.7.1",
+          }
+
+          TEXT_EXT = {".pbxproj", ".xcscheme", ".plist", ".storyboard",
+                      ".strings", ".swift", ".cpp", ".h", ".entitlements",
+                      ".xcworkspacedata", ".xcprivacy", ".json", ".xml",
+                      ".md", ".txt", ".mm", ".m", ".xcconfig", ".hpp",
+                      ".inl", ".def", ".modulemap"}
+
+          def safe_read(path):
+              try: return path.read_text(encoding="utf-8")
+              except: return None
+
+          def safe_write(path, content):
+              try: path.write_text(content, encoding="utf-8"); return True
+              except: return False
+
+          changed = 0
+          for f in pathlib.Path(APP).rglob("*"):
+              if not f.is_file() or f.suffix.lower() not in TEXT_EXT:
+                  continue
+              text = safe_read(f)
+              if text is None: continue
+              orig = text
+              for k, v in R.items():
+                  text = text.replace(k, v)
+              if text != orig:
+                  safe_write(f, text)
+                  changed += 1
+          print(f"✅ Known placeholders replaced in {changed} files.")
+
+          # ---- এখনো কোনো $ অবশিষ্ট আছে কিনা চেক ----
+          remaining = set()
+          for f in pathlib.Path(APP).rglob("*"):
+              if not f.is_file() or f.suffix.lower() not in TEXT_EXT:
+                  continue
+              text = safe_read(f)
+              if text is None: continue
+              found = re.findall(r'\$[a-zA-Z_][a-zA-Z0-9_]{2,}', text)
+              if found:
+                  for ph in found:
+                      remaining.add(ph)
+          if remaining:
+              print("❌ এখনো নিচের placeholder বাকি আছে — এগুলো রিপ্লেস করা হয়নি:")
+              for ph in sorted(remaining):
+                  print(f"   {ph}")
+              exit(1)
+          else:
+              print("✅ সব placeholder রিপ্লেস হয়ে গেছে!")
           PYEOF
 
-      # ---- 7. Update scheme file (product name matches) -------------------
-      - name: Update scheme for product name
-        run: |
-          set -e
-          SCHEME="$APP_DIR/godot_apple_embedded.xcodeproj/xcshareddata/xcschemes/godot_apple_embedded.xcscheme"
-          if [ -f "$SCHEME" ]; then
-            # buildableName must be "Godot Editor.app"
-            sed -i '' 's/buildableName = "[^"]*"/buildableName = "Godot Editor.app"/' "$SCHEME"
-            # BlueprintName must stay as the target name: "godot_apple_embedded"
-            # (no change needed)
-            echo "Scheme updated."
-          else
-            echo "WARNING: scheme not found at $SCHEME"
-            find "$APP_DIR" -name "*.xcscheme"
-          fi
-
-      # ---- 8. Set editor launch arguments in Info.plist -------------------
+      # ---- 7. Info.plist আপডেট (এডিটর আর্গুমেন্ট) ------------------------
       - name: Set editor launch arguments (Info.plist)
         run: |
           set -e
@@ -241,7 +310,7 @@ jobs:
           /usr/libexec/PlistBuddy -c "Add :godot_cmdline:3 string \$DOCS/demo_project" "$PLIST"
           echo "Launch arguments set."
 
-      # ---- 9. Generate app icon -------------------------------------------
+      # ---- 8. অ্যাপ আইকন তৈরি -------------------------------------------
       - name: Generate app icon
         run: |
           python3 << 'PYEOF'
@@ -265,18 +334,16 @@ jobs:
           print("AppIcon ready")
           PYEOF
 
-      # ---- 10. Create demo project ----------------------------------------
+      # ---- 9. ডেমো প্রজেক্ট ---------------------------------------------
       - name: Create bundled demo project
         run: |
           mkdir -p demo_project
           cat > demo_project/project.godot << 'PG_EOF'
           ; Engine configuration file.
           config_version=5
-
           [application]
           config/name="iOS Demo"
           run/main_scene="res://main.tscn"
-
           [rendering]
           renderer/rendering_method="mobile"
           PG_EOF
@@ -290,7 +357,7 @@ jobs:
           text = "Godot iOS Editor is working!"
           TSCN_EOF
 
-      # ---- 11. Build .app with Xcode (unsigned) ---------------------------
+      # ---- 10. Xcode দিয়ে .app বিল্ড (unsigned) --------------------------
       - name: Build .app with Xcode (unsigned)
         run: |
           set -e
@@ -312,7 +379,7 @@ jobs:
             build
           ls -lh "$APP_DIR/dd/Build/Products/Release-iphoneos/"
 
-      # ---- 12. Package IPA -------------------------------------------------
+      # ---- 11. IPA প্যাকেজ -----------------------------------------------
       - name: Package IPA
         run: |
           set -e
@@ -325,7 +392,7 @@ jobs:
           zip -qry "$IPA" Payload
           ls -lh "$IPA"
 
-      # ---- 13. Upload artifact ---------------------------------------------
+      # ---- 12. আর্টিফ্যাক্ট আপলোড ----------------------------------------
       - name: Upload IPA artifact
         uses: actions/upload-artifact@v4
         with:
@@ -333,7 +400,7 @@ jobs:
           path: GodotEditor-iOS-*.ipa
           retention-days: 14
 
-      # ---- 14. Summary ----------------------------------------------------
+      # ---- 13. সারসংক্ষেপ -----------------------------------------------
       - name: Build summary
         run: |
           {
