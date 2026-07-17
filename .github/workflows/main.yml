@@ -59,15 +59,13 @@ jobs:
           with open(filepath, "r") as f:
               content = f.read()
 
-          # Check if already patched
           if "godot_bootstrap_project" in content:
               print("Already patched, skipping.")
               exit(0)
 
-          # Find the #include <cstdio> line and insert after it
           include_line = '#include <cstdio>'
           if include_line not in content:
-              print("ERROR: Could not find '#include <cstdio>' in main_utilities.mm")
+              print("ERROR: Could not find '#include <cstdio>'")
               exit(1)
 
           new_code = '\n'.join([
@@ -96,10 +94,8 @@ jobs:
               ''
           ])
 
-          # Insert after #include <cstdio>
           content = content.replace(include_line, include_line + new_code)
 
-          # Find process_args function and add godot_bootstrap_project() call
           old_process = "int process_args(int p_argc, char **p_args, char **r_args) {"
           new_process = "int process_args(int p_argc, char **p_args, char **r_args) {\n\tgodot_bootstrap_project();"
 
@@ -108,18 +104,14 @@ jobs:
               exit(1)
           content = content.replace(old_process, new_process)
 
-          # Find the argument processing loop and add $DOCS expansion
           lines = content.split('\n')
           new_lines = []
           i = 0
           while i < len(lines):
               line = lines[i]
               new_lines.append(line)
-              # Look for the line that assigns cStringUsingEncoding
               if 'cStringUsingEncoding:NSUTF8StringEncoding' in line and 'p_args[p_argc++]' in line:
-                  # Get indentation from current line
                   indent = line[:len(line) - len(line.lstrip())]
-                  # Insert $DOCS expansion before this line
                   new_lines.insert(-1, indent + "// Expand $DOCS/ to the app's writable Documents directory.")
                   new_lines.insert(-1, indent + 'if ([str hasPrefix:@"$DOCS/"]) {')
                   new_lines.insert(-1, indent + '\tstr = [godot_documents_dir() stringByAppendingPathComponent:[str substringFromIndex:6]];')
@@ -131,7 +123,7 @@ jobs:
           with open(filepath, "w") as f:
               f.write(content)
 
-          print("Patch applied OK (direct file modification)")
+          print("Patch applied OK")
           SCRIPT_EOF
           python3 /tmp/patch_engine.py
 
@@ -189,12 +181,13 @@ jobs:
 
       - name: Fill template placeholders
         run: |
+          set -e
           python3 << 'PYEOF'
           import os, re, pathlib
 
           APP = "ios_app"
 
-          # Core replacements for known placeholders
+          # Step 1: Known replacements
           R = [
               ("$pbx_launch_screen_file_reference", '90DD2D9D24B36E8000717FE1 /* Launch Screen.storyboard */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = file.storyboard; path = "Launch Screen.storyboard"; sourceTree = "<group>"; };'),
               ("$pbx_launch_screen_copy_files", "90DD2D9D24B36E8000717FE1 /* Launch Screen.storyboard */,"),
@@ -264,9 +257,28 @@ jobs:
               if t != o:
                   p.write_text(t, encoding="utf-8")
                   changed += 1
-          print("placeholder-processed files:", changed)
+          print("Known placeholder-processed files:", changed)
 
-          # $binary -> godot : file/dir renames
+          # Step 2: AGGRESSIVE - find ALL $word patterns and blank them
+          # This is critical for .pbxproj to not have parse errors
+          total_blanked = 0
+          for p in pathlib.Path(APP).rglob("*"):
+              if not p.is_file():
+                  continue
+              t = p.read_text(encoding="utf-8")
+              o = t
+              # Find all $word patterns (at least 3 chars after $)
+              placeholders = set(re.findall(r'\$[a-zA-Z_][a-zA-Z0-9_]{2,}', t))
+              for ph in placeholders:
+                  t = t.replace(ph, "")
+                  total_blanked += 1
+                  print(f"  BLANKED: {ph} in {p.name}")
+              if t != o:
+                  p.write_text(t, encoding="utf-8")
+
+          print(f"Total placeholders blanked: {total_blanked}")
+
+          # Step 3: Rename files
           if os.path.exists(f"{APP}/godot_apple_embedded"):
               os.rename(f"{APP}/godot_apple_embedded", f"{APP}/godot")
           if os.path.exists(f"{APP}/godot/godot_apple_embedded-Info.plist"):
@@ -274,25 +286,16 @@ jobs:
           if os.path.exists(f"{APP}/godot/godot_apple_embedded.entitlements"):
               os.rename(f"{APP}/godot/godot_apple_embedded.entitlements", f"{APP}/godot/godot.entitlements")
 
-          # Auto-discover and blank out any remaining $placeholders
-          leftover_found = False
-          for p in pathlib.Path(APP).rglob("*"):
-              if not p.is_file() or p.suffix not in EXTS:
-                  continue
-              t = p.read_text(encoding="utf-8")
-              o = t
-              placeholders = set(re.findall(r'\$[a-zA-Z_][a-zA-Z0-9_]*', t))
-              for ph in placeholders:
-                  t = t.replace(ph, "")
-                  leftover_found = True
-                  print(f"  blanked leftover: {ph} in {p}")
-              if t != o:
-                  p.write_text(t, encoding="utf-8")
-
-          if not leftover_found:
-              print("No leftover placeholders found (all clean!)")
-          else:
-              print("Leftover placeholders were auto-cleared.")
+          # Step 4: Verify no $ remains in .pbxproj
+          pbxproj_path = pathlib.Path(APP) / "godot_apple_embedded.xcodeproj" / "project.pbxproj"
+          if pbxproj_path.exists():
+              content = pbxproj_path.read_text(encoding="utf-8")
+              remaining = re.findall(r'\$[a-zA-Z_][a-zA-Z0-9_]{2,}', content)
+              if remaining:
+                  print(f"CRITICAL: {len(remaining)} placeholders still in .pbxproj: {remaining[:10]}")
+                  exit(1)
+              else:
+                  print("VERIFIED: .pbxproj is clean - no placeholders remaining!")
           PYEOF
 
       - name: Set editor launch arguments (Info.plist)
