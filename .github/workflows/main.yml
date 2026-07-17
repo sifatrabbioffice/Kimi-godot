@@ -48,6 +48,9 @@ jobs:
       - name: Clone Godot source
         run: git clone --depth 1 --branch "$GODOT_REF" https://github.com/godotengine/godot.git godot
 
+      # iOS-এ editor/editor subprocess spawn করা যায় না, তাই ছোট একটা patch:
+      # app-এর ভেতরে বান্ডিল করা demo_project প্রথম launch-এ Documents-এ copy হয়
+      # এবং Info.plist-এর godot_cmdline-এ $DOCS/ লিখলে Documents path-এ expand হয়।
       - name: Patch engine (boot straight into editor)
         working-directory: godot
         run: |
@@ -114,18 +117,19 @@ jobs:
           set -e
           LIB="$(ls godot/bin/libgodot.ios.editor.arm64*.a | head -n1)"
           echo "Editor library: $LIB"
-          cp -R "godot/misc/dist/apple_embedded_xcode" "$APP_DIR"
-          rm -rf "$APP_DIR"/libgodot.visionos.debug.xcframework \
-                 "$APP_DIR"/libgodot.visionos.release.xcframework \
-                 "$APP_DIR"/libgodot_camera.ios.debug.xcframework \
-                 "$APP_DIR"/libgodot_camera.ios.release.xcframework \
-                 "$APP_DIR"/libgodot_camera.visionos.debug.xcframework \
-                 "$APP_DIR"/libgodot_camera.visionos.release.xcframework \
-                 "$APP_DIR"/libgodot.ios.debug.xcframework \
-                 "$APP_DIR"/libgodot.ios.release.xcframework
-          mkdir -p "$APP_DIR/godot.xcframework/ios-arm64"
-          cp "$LIB" "$APP_DIR/godot.xcframework/ios-arm64/libgodot.a"
-          cat > "$APP_DIR/godot.xcframework/Info.plist" << 'XCF_EOF'
+          # Copy template to the expected folder name so later rename works
+          cp -R "godot/misc/dist/apple_embedded_xcode" "$APP_DIR/godot_apple_embedded"
+          rm -rf "$APP_DIR/godot_apple_embedded"/libgodot.visionos.debug.xcframework \
+                 "$APP_DIR/godot_apple_embedded"/libgodot.visionos.release.xcframework \
+                 "$APP_DIR/godot_apple_embedded"/libgodot_camera.ios.debug.xcframework \
+                 "$APP_DIR/godot_apple_embedded"/libgodot_camera.ios.release.xcframework \
+                 "$APP_DIR/godot_apple_embedded"/libgodot_camera.visionos.debug.xcframework \
+                 "$APP_DIR/godot_apple_embedded"/libgodot_camera.visionos.release.xcframework \
+                 "$APP_DIR/godot_apple_embedded"/libgodot.ios.debug.xcframework \
+                 "$APP_DIR/godot_apple_embedded"/libgodot.ios.release.xcframework
+          mkdir -p "$APP_DIR/godot_apple_embedded/godot.xcframework/ios-arm64"
+          cp "$LIB" "$APP_DIR/godot_apple_embedded/godot.xcframework/ios-arm64/libgodot.a"
+          cat > "$APP_DIR/godot_apple_embedded/godot.xcframework/Info.plist" << 'XCF_EOF'
           <?xml version="1.0" encoding="UTF-8"?>
           <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
           <plist version="1.0">
@@ -152,7 +156,8 @@ jobs:
           </dict>
           </plist>
           XCF_EOF
-          mv "$APP_DIR/data.pck" "$APP_DIR/godot.pck"
+          # Move the placeholder data.pck to godot.pck (inside the template)
+          mv "$APP_DIR/godot_apple_embedded/data.pck" "$APP_DIR/godot_apple_embedded/godot.pck"
 
       - name: Fill template placeholders
         run: |
@@ -223,8 +228,9 @@ jobs:
                   changed += 1
           print("placeholder-processed files:", changed)
 
-          # $binary -> godot : file/dir renames
+          # Now rename the folder from godot_apple_embedded to godot
           os.rename(f"{APP}/godot_apple_embedded", f"{APP}/godot")
+          # Also rename the Info.plist and entitlements inside
           os.rename(f"{APP}/godot/godot_apple_embedded-Info.plist", f"{APP}/godot/godot-Info.plist")
           os.rename(f"{APP}/godot/godot_apple_embedded.entitlements", f"{APP}/godot/godot.entitlements")
 
@@ -307,7 +313,7 @@ jobs:
         run: |
           set -e
           xcodebuild \
-            -project "$APP_DIR/godot_apple_embedded.xcodeproj" \
+            -project "$APP_DIR/godot/godot_apple_embedded.xcodeproj" \
             -scheme godot_apple_embedded \
             -configuration Release \
             -sdk iphoneos \
