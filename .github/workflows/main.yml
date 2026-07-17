@@ -48,9 +48,6 @@ jobs:
       - name: Clone Godot source
         run: git clone --depth 1 --branch "$GODOT_REF" https://github.com/godotengine/godot.git godot
 
-      # iOS-এ editor/editor subprocess spawn করা যায় না, তাই ছোট একটা patch:
-      # app-এর ভেতরে বান্ডিল করা demo_project প্রথম launch-এ Documents-এ copy হয়
-      # এবং Info.plist-এর godot_cmdline-এ $DOCS/ লিখলে Documents path-এ expand হয়।
       - name: Patch engine (boot straight into editor)
         working-directory: godot
         run: |
@@ -91,15 +88,11 @@ jobs:
               content = content[:insert_point] + new_code + content[insert_point:]
 
           # 2. Modify argument processing to expand $DOCS/
-          # Find the loop inside change_to_launch_dir that processes arguments
-          # Look for the pattern: for (int i = 0; i < [arr count]; i++) { ... }
-          # We'll replace the block that does if (!str) continue; with expanded logic
           pattern = r'(for\s*\(\s*int\s+i\s*=\s*0;\s*i\s*<\s*\[\s*arr\s+count\s*\];\s*i\+\+\s*\)\s*\{)\s*(NSString\s*\*\s*str\s*=\s*\[arr\s+objectAtIndex:i\];\s*if\s*\(\s*!str\s*\)\s*\{\s*continue;\s*\})'
           replacement = r'\1\n            NSString *str = [arr objectAtIndex:i];\n            if (!str) {\n                continue;\n            }\n            // Expand $DOCS/ to the app\'s writable Documents directory.\n            if ([str hasPrefix:@"$DOCS/"]) {\n                str = [godot_documents_dir() stringByAppendingPathComponent:[str substringFromIndex:6]];\n            }'
           content = re.sub(pattern, replacement, content, flags=re.DOTALL)
 
           # 3. Call godot_bootstrap_project() at the start of process_args
-          # Find the function process_args and insert the call after the opening brace
           pattern = r'(int\s+process_args\s*\(\s*int\s+p_argc\s*,\s*char\s*\*\*p_args\s*,\s*char\s*\*\*r_args\s*\)\s*\{)'
           replacement = r'\1\n    godot_bootstrap_project();'
           content = re.sub(pattern, replacement, content)
@@ -314,7 +307,7 @@ jobs:
         run: |
           set -e
           xcodebuild \
-            -project "$APP_DIR/godot/godot_apple_embedded.xcodeproj" \
+            -project "$APP_DIR/godot_apple_embedded.xcodeproj" \
             -scheme godot_apple_embedded \
             -configuration Release \
             -sdk iphoneos \
