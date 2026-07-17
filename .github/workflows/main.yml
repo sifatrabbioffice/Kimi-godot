@@ -3,8 +3,8 @@
 #
 # iPad/iPhone-এ চালানোর জন্য Godot editor-এর unsigned IPA বিল্ড করে।
 #
-# ব্যাবহার:
-#   1. এই ফাইলটা আপনার repo-তে রাখুন: .github/workflows/godot-ios-editor.yml
+# ব্যবহার:
+#   1. এই ফাইলটি আপনার repo-তে রাখুন: .github/workflows/godot-ios-editor.yml
 #   2. GitHub → Actions → "Godot iOS Editor (IPA)" → Run workflow
 #   3. Run শেষ হলে Artifacts থেকে GodotEditor-iOS-ipa ডাউনলোড করুন
 #   4. IPA টা AltStore / SideStore / Sideloadly / TrollStore দিয়ে install করুন
@@ -25,7 +25,7 @@ on:
 env:
   GODOT_REF: ${{ inputs.godot_ref }}
   APP_DIR: ios_app
-  BINARY: godot
+  BINARY: godot   # product name
 
 jobs:
   build:
@@ -140,6 +140,7 @@ jobs:
           LIB="$(ls godot/bin/libgodot.ios.editor.arm64*.a | head -n1)"
           echo "Editor library: $LIB"
           cp -R "godot/misc/dist/apple_embedded_xcode" "$APP_DIR"
+          # Remove unnecessary xcframeworks
           rm -rf "$APP_DIR"/libgodot.visionos.debug.xcframework \
                  "$APP_DIR"/libgodot.visionos.release.xcframework \
                  "$APP_DIR"/libgodot_camera.ios.debug.xcframework \
@@ -179,7 +180,7 @@ jobs:
           XCF_EOF
           mv "$APP_DIR/data.pck" "$APP_DIR/godot.pck"
 
-      - name: Fill template placeholders
+      - name: Fill template placeholders (NO aggressive blanking)
         run: |
           set -e
           python3 << 'PYEOF'
@@ -187,7 +188,6 @@ jobs:
 
           APP = "ios_app"
 
-          # Helper: safely read text, skip binary files
           def safe_read_text(path):
               try:
                   return path.read_text(encoding="utf-8")
@@ -201,14 +201,7 @@ jobs:
               except Exception:
                   return False
 
-          # DEBUG: List all files in the project
-          print("=== DEBUG: Files in ios_app ===")
-          for p in sorted(pathlib.Path(APP).rglob("*")):
-              if p.is_file():
-                  print(f"  {p}")
-          print("=== END DEBUG ===")
-
-          # Step 1: Known replacements on text files only
+          # Known replacements (covering every placeholder in Godot's template)
           R = [
               ("$pbx_launch_screen_file_reference", '90DD2D9D24B36E8000717FE1 /* Launch Screen.storyboard */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = file.storyboard; path = "Launch Screen.storyboard"; sourceTree = "<group>"; };'),
               ("$pbx_launch_screen_copy_files", "90DD2D9D24B36E8000717FE1 /* Launch Screen.storyboard */,"),
@@ -282,81 +275,63 @@ jobs:
               if t != o:
                   safe_write_text(p, t)
                   changed += 1
-          print("Known placeholder-processed files:", changed)
+          print("Placeholder replacements done in", changed, "files")
 
-          # Step 2: AGGRESSIVE - find ALL $word patterns and blank them
-          total_blanked = 0
-          for p in pathlib.Path(APP).rglob("*"):
-              if not p.is_file():
-                  continue
-              t = safe_read_text(p)
-              if t is None:
-                  continue
-              o = t
-              placeholders = set(re.findall(r'\$[a-zA-Z_][a-zA-Z0-9_]{2,}', t))
-              for ph in placeholders:
-                  t = t.replace(ph, "")
-                  total_blanked += 1
-                  print(f"  BLANKED: {ph} in {p.name}")
-              if t != o:
-                  safe_write_text(p, t)
-
-          print(f"Total placeholders blanked: {total_blanked}")
-
-          # Step 3: Rename files
-          if os.path.exists(f"{APP}/godot_apple_embedded"):
-              os.rename(f"{APP}/godot_apple_embedded", f"{APP}/godot")
-          if os.path.exists(f"{APP}/godot/godot_apple_embedded-Info.plist"):
-              os.rename(f"{APP}/godot/godot_apple_embedded-Info.plist", f"{APP}/godot/godot-Info.plist")
-          if os.path.exists(f"{APP}/godot/godot_apple_embedded.entitlements"):
-              os.rename(f"{APP}/godot/godot_apple_embedded.entitlements", f"{APP}/godot/godot.entitlements")
-
-          # Step 4: Verify no $ remains in .pbxproj
-          pbxproj_path = pathlib.Path(APP) / "godot_apple_embedded.xcodeproj" / "project.pbxproj"
-          if pbxproj_path.exists():
-              content = safe_read_text(pbxproj_path)
-              if content:
-                  remaining = re.findall(r'\$[a-zA-Z_][a-zA-Z0-9_]{2,}', content)
-                  if remaining:
-                      print(f"CRITICAL: {len(remaining)} placeholders still in .pbxproj: {remaining[:10]}")
-                      exit(1)
-                  else:
-                      print("VERIFIED: .pbxproj is clean - no placeholders remaining!")
-              else:
-                  print("WARNING: Could not read .pbxproj for verification")
-          else:
-              print(f"WARNING: .pbxproj not found at {pbxproj_path}")
-              # Try to find it
-              for p in pathlib.Path(APP).rglob("*.pbxproj"):
-                  print(f"  Found .pbxproj at: {p}")
+          # Verify NO remaining $word patterns in pbxproj and scheme
+          for fname in ["project.pbxproj", "godot_apple_embedded.xcscheme"]:
+              for p in pathlib.Path(APP).rglob(fname):
+                  content = safe_read_text(p)
+                  if content:
+                      remaining = re.findall(r'\$[a-zA-Z_][a-zA-Z0-9_]{2,}', content)
+                      if remaining:
+                          print(f"ERROR: {len(remaining)} placeholders still in {p.name}: {remaining[:10]}")
+                          exit(1)
+                      else:
+                          print(f"All placeholders cleared in {p.name}")
           PYEOF
 
-      - name: DEBUG - Check .xcodeproj structure
+      - name: Update scheme for new product/target names
         run: |
           set -e
-          echo "=== DEBUG: .xcodeproj structure ==="
-          ls -la "$APP_DIR/"
-          echo "---"
-          if [ -d "$APP_DIR/godot_apple_embedded.xcodeproj" ]; then
-            ls -la "$APP_DIR/godot_apple_embedded.xcodeproj/"
-            echo "---"
-            if [ -f "$APP_DIR/godot_apple_embedded.xcodeproj/project.pbxproj" ]; then
-              echo "project.pbxproj exists"
-              head -20 "$APP_DIR/godot_apple_embedded.xcodeproj/project.pbxproj"
-            else
-              echo "project.pbxproj MISSING!"
-            fi
+          SCHEME="$APP_DIR/godot_apple_embedded.xcodeproj/xcshareddata/xcschemes/godot_apple_embedded.xcscheme"
+          if [ -f "$SCHEME" ]; then
+            # Change buildable product name and blueprint name to match what we set
+            sed -i '' 's/buildableName = "godot_apple_embedded.app"/buildableName = "godot.app"/' "$SCHEME"
+            sed -i '' 's/BlueprintName = "godot_apple_embedded"/BlueprintName = "Godot Editor"/' "$SCHEME"
+            # Also replace any leftover godot_apple_embedded with godot (container path is fine)
+            echo "Scheme updated."
           else
-            echo ".xcodeproj directory MISSING!"
-            echo "Looking for .xcodeproj..."
-            find "$APP_DIR" -name "*.xcodeproj" -type d
+            echo "WARNING: scheme file not found at $SCHEME"
+            find "$APP_DIR" -name "*.xcscheme"
           fi
-          echo "=== END DEBUG ==="
 
-      - name: Set editor launch arguments (Info.plist)
+      - name: Generate app icon (inside original folder)
+        run: |
+          python3 << 'PYEOF'
+          import os, json
+          from PIL import Image, ImageDraw
+
+          base = "ios_app/godot_apple_embedded/Images.xcassets/AppIcon.appiconset"
+          os.makedirs(base, exist_ok=True)
+
+          img = Image.new("RGB", (1024, 1024), (71, 140, 191))   # Godot blue
+          d = ImageDraw.Draw(img)
+          d.ellipse([212, 212, 812, 812], fill=(255, 255, 255))
+          d.ellipse([402, 402, 622, 622], fill=(71, 140, 191))
+          img.save(os.path.join(base, "icon_1024.png"))
+
+          json.dump(
+              {"images": [{"filename": "icon_1024.png", "idiom": "universal",
+                            "platform": "ios", "size": "1024x1024"}],
+               "info": {"author": "xcode", "version": 1}},
+              open(os.path.join(base, "Contents.json"), "w"))
+          print("AppIcon.appiconset ready")
+          PYEOF
+
+      - name: Set editor launch arguments (Info.plist, original path)
         run: |
           set -e
-          PLIST="$APP_DIR/godot/godot-Info.plist"
+          PLIST="$APP_DIR/godot_apple_embedded/godot_apple_embedded-Info.plist"
           /usr/libexec/PlistBuddy -c "Add :godot_editor_bootstrap_project string demo_project" "$PLIST"
           /usr/libexec/PlistBuddy -c "Add :godot_cmdline array" "$PLIST"
           /usr/libexec/PlistBuddy -c "Add :godot_cmdline:0 string --editor" "$PLIST"
@@ -395,29 +370,6 @@ jobs:
           theme_override_font_sizes/font_size = 40
           text = "Godot iOS Editor is working!"
           TSCN_EOF
-
-      - name: Generate app icon
-        run: |
-          python3 << 'PYEOF'
-          import os, json
-          from PIL import Image, ImageDraw
-
-          base = "ios_app/godot/Images.xcassets/AppIcon.appiconset"
-          os.makedirs(base, exist_ok=True)
-
-          img = Image.new("RGB", (1024, 1024), (71, 140, 191))   # Godot blue
-          d = ImageDraw.Draw(img)
-          d.ellipse([212, 212, 812, 812], fill=(255, 255, 255))
-          d.ellipse([402, 402, 622, 622], fill=(71, 140, 191))
-          img.save(os.path.join(base, "icon_1024.png"))
-
-          json.dump(
-              {"images": [{"filename": "icon_1024.png", "idiom": "universal",
-                            "platform": "ios", "size": "1024x1024"}],
-               "info": {"author": "xcode", "version": 1}},
-              open(os.path.join(base, "Contents.json"), "w"))
-          print("AppIcon.appiconset ready")
-          PYEOF
 
       - name: Build .app with Xcode (unsigned)
         run: |
