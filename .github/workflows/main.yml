@@ -23,7 +23,7 @@ on:
       godot_ref:
         description: "Godot tag/branch (e.g. 4.2-stable, 4.3-stable, 4.4-stable)"
         required: true
-        default: "4.3-stable"
+        default: "4.7-stable"
 
 env:
   GODOT_REF: ${{ inputs.godot_ref }}
@@ -35,7 +35,7 @@ env:
   # iOS version
   IOS_VERSION: "15.0"
   # Godot version (for Info.plist)
-  GODOT_VERSION: "4.3"
+  GODOT_VERSION: "4.7"
 
 jobs:
   build:
