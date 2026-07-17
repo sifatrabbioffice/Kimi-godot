@@ -59,78 +59,64 @@ jobs:
           with open(filepath, "r") as f:
               content = f.read()
 
-          # Check if already patched
           if "godot_bootstrap_project" in content:
               print("Already patched, skipping.")
               exit(0)
 
-          # Find the #include <cstdio> line and insert after it
           include_line = '#include <cstdio>'
           if include_line not in content:
-              print("ERROR: Could not find '#include <cstdio>' in main_utilities.mm")
+              print("ERROR: Could not find '#include <cstdio>'")
               exit(1)
 
           new_code = """
 static NSString *godot_documents_dir(void) {
-	return [NSSearchPathForDirectoriesInDomains(NSDocumentDirectory, NSUserDomainMask, YES) firstObject];
+    return [NSSearchPathForDirectoriesInDomains(NSDocumentDirectory, NSUserDomainMask, YES) firstObject];
 }
 
-// Copies the project bundled inside the .app to the writable Documents
-// directory on first launch, so the editor can open it (iOS sandbox hack).
 static void godot_bootstrap_project(void) {
-	NSString *proj = [[[NSBundle mainBundle] infoDictionary] objectForKey:@"godot_editor_bootstrap_project"];
-	if (!proj || [proj length] == 0) {
-		return;
-	}
-	NSFileManager *fm = [NSFileManager defaultManager];
-	NSString *dst = [godot_documents_dir() stringByAppendingPathComponent:proj];
-	if ([fm fileExistsAtPath:dst]) {
-		return;
-	}
-	NSString *src = [[NSBundle mainBundle] pathForResource:proj ofType:nil];
-	if (src) {
-		[fm copyItemAtPath:src toPath:dst error:nil];
-	}
+    NSString *proj = [[[NSBundle mainBundle] infoDictionary] objectForKey:@"godot_editor_bootstrap_project"];
+    if (!proj || [proj length] == 0) {
+        return;
+    }
+    NSFileManager *fm = [NSFileManager defaultManager];
+    NSString *dst = [godot_documents_dir() stringByAppendingPathComponent:proj];
+    if ([fm fileExistsAtPath:dst]) {
+        return;
+    }
+    NSString *src = [[NSBundle mainBundle] pathForResource:proj ofType:nil];
+    if (src) {
+        [fm copyItemAtPath:src toPath:dst error:nil];
+    }
 }
 """
-
-          # Insert after #include <cstdio>
           content = content.replace(include_line, include_line + new_code)
 
-          # Find process_args function and add godot_bootstrap_project() call
           old_process = "int process_args(int p_argc, char **p_args, char **r_args) {"
-          new_process = "int process_args(int p_argc, char **p_args, char **r_args) {\n\tgodot_bootstrap_project();"
-
+          new_process = "int process_args(int p_argc, char **p_args, char **r_args) {
+    godot_bootstrap_project();"
           if old_process not in content:
               print("ERROR: Could not find process_args function")
               exit(1)
           content = content.replace(old_process, new_process)
 
-          # Find the argument processing loop and add $DOCS expansion
-          # Use a simpler approach - find the line with cStringUsingEncoding
-          lines = content.split('\n')
+          # Add $DOCS expansion before cStringUsingEncoding line
+          lines = content.split('
+')
           new_lines = []
-          i = 0
-          while i < len(lines):
-              line = lines[i]
+          for line in lines:
               new_lines.append(line)
-              # Look for the line that assigns cStringUsingEncoding
               if 'cStringUsingEncoding:NSUTF8StringEncoding' in line and 'p_args[p_argc++]' in line:
-                  # Insert $DOCS expansion before this line
-                  # Find the proper indentation
-                  indent = line[:len(line) - len(line.lstrip())]
-                  new_lines.insert(-1, indent + '// Expand $DOCS/ to the app\'s writable Documents directory.')
+                  indent = '    '
+                  new_lines.insert(-1, indent + "// Expand $DOCS/ to Documents directory")
                   new_lines.insert(-1, indent + 'if ([str hasPrefix:@"$DOCS/"]) {')
-                  new_lines.insert(-1, indent + '\tstr = [godot_documents_dir() stringByAppendingPathComponent:[str substringFromIndex:6]];')
+                  new_lines.insert(-1, indent + '    str = [godot_documents_dir() stringByAppendingPathComponent:[str substringFromIndex:6]];')
                   new_lines.insert(-1, indent + '}')
-              i += 1
-
-          content = '\n'.join(new_lines)
+          content = '
+'.join(new_lines)
 
           with open(filepath, "w") as f:
               f.write(content)
-
-          print("Patch applied OK (direct file modification)")
+          print("Patch applied OK")
           PYEOF
 
       - name: Compile Godot editor library (iOS arm64)
@@ -146,14 +132,7 @@ static void godot_bootstrap_project(void) {
           LIB="$(ls godot/bin/libgodot.ios.editor.arm64*.a | head -n1)"
           echo "Editor library: $LIB"
           cp -R "godot/misc/dist/apple_embedded_xcode" "$APP_DIR"
-          rm -rf "$APP_DIR"/libgodot.visionos.debug.xcframework \
-                 "$APP_DIR"/libgodot.visionos.release.xcframework \
-                 "$APP_DIR"/libgodot_camera.ios.debug.xcframework \
-                 "$APP_DIR"/libgodot_camera.ios.release.xcframework \
-                 "$APP_DIR"/libgodot_camera.visionos.debug.xcframework \
-                 "$APP_DIR"/libgodot_camera.visionos.release.xcframework \
-                 "$APP_DIR"/libgodot.ios.debug.xcframework \
-                 "$APP_DIR"/libgodot.ios.release.xcframework
+          rm -rf "$APP_DIR"/libgodot.visionos.debug.xcframework                  "$APP_DIR"/libgodot.visionos.release.xcframework                  "$APP_DIR"/libgodot_camera.ios.debug.xcframework                  "$APP_DIR"/libgodot_camera.ios.release.xcframework                  "$APP_DIR"/libgodot_camera.visionos.debug.xcframework                  "$APP_DIR"/libgodot_camera.visionos.release.xcframework                  "$APP_DIR"/libgodot.ios.debug.xcframework                  "$APP_DIR"/libgodot.ios.release.xcframework
           mkdir -p "$APP_DIR/godot.xcframework/ios-arm64"
           cp "$LIB" "$APP_DIR/godot.xcframework/ios-arm64/libgodot.a"
           cat > "$APP_DIR/godot.xcframework/Info.plist" << 'XCF_EOF'
@@ -161,25 +140,25 @@ static void godot_bootstrap_project(void) {
           <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
           <plist version="1.0">
           <dict>
-          	<key>AvailableLibraries</key>
-          	<array>
-          		<dict>
-          			<key>LibraryIdentifier</key>
-          			<string>ios-arm64</string>
-          			<key>LibraryPath</key>
-          			<string>libgodot.a</string>
-          			<key>SupportedArchitectures</key>
-          			<array>
-          				<string>arm64</string>
-          			</array>
-          			<key>SupportedPlatform</key>
-          			<string>ios</string>
-          		</dict>
-          	</array>
-          	<key>CFBundlePackageType</key>
-          	<string>XFWK</string>
-          	<key>XCFrameworkFormatVersion</key>
-          	<string>1.0</string>
+              <key>AvailableLibraries</key>
+              <array>
+                  <dict>
+                      <key>LibraryIdentifier</key>
+                      <string>ios-arm64</string>
+                      <key>LibraryPath</key>
+                      <string>libgodot.a</string>
+                      <key>SupportedArchitectures</key>
+                      <array>
+                          <string>arm64</string>
+                      </array>
+                      <key>SupportedPlatform</key>
+                      <string>ios</string>
+                  </dict>
+              </array>
+              <key>CFBundlePackageType</key>
+              <string>XFWK</string>
+              <key>XCFrameworkFormatVersion</key>
+              <string>1.0</string>
           </dict>
           </plist>
           XCF_EOF
@@ -192,13 +171,12 @@ static void godot_bootstrap_project(void) {
 
           APP = "ios_app"
 
-          # Core replacements for known placeholders
           R = [
               ("$pbx_launch_screen_file_reference", '90DD2D9D24B36E8000717FE1 /* Launch Screen.storyboard */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = file.storyboard; path = "Launch Screen.storyboard"; sourceTree = "<group>"; };'),
               ("$pbx_launch_screen_copy_files", "90DD2D9D24B36E8000717FE1 /* Launch Screen.storyboard */,"),
               ("$pbx_launch_screen_build_phase", "90DD2D9E24B36E8000717FE1 /* Launch Screen.storyboard in Resources */,"),
               ("$pbx_launch_screen_build_reference", "90DD2D9E24B36E8000717FE1 /* Launch Screen.storyboard in Resources */ = {isa = PBXBuildFile; fileRef = 90DD2D9D24B36E8000717FE1 /* Launch Screen.storyboard */; };"),
-              ("$plist_launch_screen_name", "<key>UILaunchStoryboardName</key>\n\t<string>Launch Screen</string>"),
+              ("$plist_launch_screen_name", "<key>UILaunchStoryboardName</key><string>Launch Screen</string>"),
               ("$launch_screen_image_mode", "center"),
               ("$launch_screen_background_color", 'red="0.10" green="0.11" blue="0.14" alpha="1"'),
               ("$moltenvk_buildfile", ""), ("$moltenvk_fileref", ""),
@@ -229,8 +207,8 @@ static void godot_bootstrap_project(void) {
               ("$camera_usage_description", "Godot projects can use the camera."),
               ("$photolibrary_usage_description", "Godot projects can use the photo library."),
               ("$microphone_usage_description", "Godot projects can use the microphone."),
-              ("$interface_orientations", "<string>UIInterfaceOrientationPortrait</string>\n\t\t<string>UIInterfaceOrientationPortraitUpsideDown</string>\n\t\t<string>UIInterfaceOrientationLandscapeLeft</string>\n\t\t<string>UIInterfaceOrientationLandscapeRight</string>"),
-              ("$ipad_interface_orientations", "<string>UIInterfaceOrientationPortrait</string>\n\t\t<string>UIInterfaceOrientationPortraitUpsideDown</string>\n\t\t<string>UIInterfaceOrientationLandscapeLeft</string>\n\t\t<string>UIInterfaceOrientationLandscapeRight</string>"),
+              ("$interface_orientations", "<string>UIInterfaceOrientationPortrait</string><string>UIInterfaceOrientationPortraitUpsideDown</string><string>UIInterfaceOrientationLandscapeLeft</string><string>UIInterfaceOrientationLandscapeRight</string>"),
+              ("$ipad_interface_orientations", "<string>UIInterfaceOrientationPortrait</string><string>UIInterfaceOrientationPortraitUpsideDown</string><string>UIInterfaceOrientationLandscapeLeft</string><string>UIInterfaceOrientationLandscapeRight</string>"),
               ("$additional_plist_content", ""),
               ("$entitlements_full", ""),
               ("$cpp_code", ""),
@@ -264,7 +242,6 @@ static void godot_bootstrap_project(void) {
                   changed += 1
           print("placeholder-processed files:", changed)
 
-          # $binary -> godot : file/dir renames
           if os.path.exists(f"{APP}/godot_apple_embedded"):
               os.rename(f"{APP}/godot_apple_embedded", f"{APP}/godot")
           if os.path.exists(f"{APP}/godot/godot_apple_embedded-Info.plist"):
@@ -272,7 +249,6 @@ static void godot_bootstrap_project(void) {
           if os.path.exists(f"{APP}/godot/godot_apple_embedded.entitlements"):
               os.rename(f"{APP}/godot/godot_apple_embedded.entitlements", f"{APP}/godot/godot.entitlements")
 
-          # Auto-discover and blank out any remaining $placeholders
           leftover_found = False
           for p in pathlib.Path(APP).rglob("*"):
               if not p.is_file() or p.suffix not in EXTS:
@@ -345,7 +321,7 @@ static void godot_bootstrap_project(void) {
           base = "ios_app/godot/Images.xcassets/AppIcon.appiconset"
           os.makedirs(base, exist_ok=True)
 
-          img = Image.new("RGB", (1024, 1024), (71, 140, 191))   # Godot blue
+          img = Image.new("RGB", (1024, 1024), (71, 140, 191))
           d = ImageDraw.Draw(img)
           d.ellipse([212, 212, 812, 812], fill=(255, 255, 255))
           d.ellipse([402, 402, 622, 622], fill=(71, 140, 191))
@@ -362,22 +338,7 @@ static void godot_bootstrap_project(void) {
       - name: Build .app with Xcode (unsigned)
         run: |
           set -e
-          xcodebuild \
-            -project "$APP_DIR/godot_apple_embedded.xcodeproj" \
-            -scheme godot_apple_embedded \
-            -configuration Release \
-            -sdk iphoneos \
-            -destination "generic/platform=iOS" \
-            -derivedDataPath "$APP_DIR/dd" \
-            CODE_SIGNING_ALLOWED=NO \
-            CODE_SIGNING_REQUIRED=NO \
-            CODE_SIGN_IDENTITY="" \
-            DEVELOPMENT_TEAM="" \
-            PROVISIONING_PROFILE="" \
-            PROVISIONING_PROFILE_SPECIFIER="" \
-            VALIDATE_PRODUCT=NO \
-            ONLY_ACTIVE_ARCH=YES \
-            build
+          xcodebuild             -project "$APP_DIR/godot_apple_embedded.xcodeproj"             -scheme godot_apple_embedded             -configuration Release             -sdk iphoneos             -destination "generic/platform=iOS"             -derivedDataPath "$APP_DIR/dd"             CODE_SIGNING_ALLOWED=NO             CODE_SIGNING_REQUIRED=NO             CODE_SIGN_IDENTITY=""             DEVELOPMENT_TEAM=""             PROVISIONING_PROFILE=""             PROVISIONING_PROFILE_SPECIFIER=""             VALIDATE_PRODUCT=NO             ONLY_ACTIVE_ARCH=YES             build
           ls -lh "$APP_DIR/dd/Build/Products/Release-iphoneos/"
 
       - name: Package IPA
