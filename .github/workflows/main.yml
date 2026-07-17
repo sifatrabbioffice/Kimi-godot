@@ -15,10 +15,6 @@
 name: Godot iOS Editor (IPA)
 
 on:
-  push:
-    branches:
-      - main
-      - master
   workflow_dispatch:
     inputs:
       godot_ref:
@@ -27,8 +23,7 @@ on:
         default: "4.7.1-stable"
 
 env:
-  # যখন push এর মাধ্যমে অটো রান হবে, তখন ইনপুট না থাকায় '4.7.1-stable' ডিফল্ট হিসেবে কাজ করবে
-  GODOT_REF: ${{ inputs.godot_ref || '4.7.1-stable' }}
+  GODOT_REF: ${{ inputs.godot_ref }}
   APP_DIR: ios_app
   BINARY: godot
 
@@ -53,9 +48,6 @@ jobs:
       - name: Clone Godot source
         run: git clone --depth 1 --branch "$GODOT_REF" https://github.com/godotengine/godot.git godot
 
-      # iOS-এ editor/editor subprocess spawn করা যায় না, তাই ছোট একটা patch:
-      # app-এর ভেতরে বান্ডিল করা demo_project প্রথম launch-এ Documents-এ copy হয়
-      # এবং Info.plist-এর godot_cmdline-এ $DOCS/ লিখলে Documents path-এ expand হয়।
       - name: Patch engine (boot straight into editor)
         working-directory: godot
         run: |
@@ -98,9 +90,9 @@ jobs:
            		if (!str) {
            			continue;
            		}
-          +		// Expand $DOCS/ to the app\'s writable Documents directory.
-          +		if ([str hasPrefix:@"$DOCS/"]) {
-          +			str = [godot_documents_dir() stringByAppendingPathComponent:[str substringFromIndex:6]];
+          +		// Expand $$DOCS/ to the app\'s writable Documents directory.
+          +		if ([str hasPrefix:@"$$DOCS/"]) {
+          +			str = [godot_documents_dir() stringByAppendingPathComponent:[str substringFromIndex:7]];
           +		}
            		p_args[p_argc++] = (char *)[str cStringUsingEncoding:NSUTF8StringEncoding];
            	}
@@ -258,15 +250,12 @@ jobs:
               os.rename(f"{APP}/godot/godot_apple_embedded.entitlements", f"{APP}/godot/godot.entitlements")
 
           # Auto-discover and blank out any remaining $placeholders
-          # This prevents "project is damaged" parse errors
           leftover_found = False
           for p in pathlib.Path(APP).rglob("*"):
               if not p.is_file() or p.suffix not in EXTS:
                   continue
               t = p.read_text(encoding="utf-8")
               o = t
-              # Find all $word patterns and replace with empty string
-              # This is a safety net for any placeholders we missed
               placeholders = set(re.findall(r'\$[a-zA-Z_][a-zA-Z0-9_]*', t))
               for ph in placeholders:
                   t = t.replace(ph, "")
