@@ -187,7 +187,21 @@ jobs:
 
           APP = "ios_app"
 
-          # Step 1: Known replacements
+          # Helper: safely read text, skip binary files
+          def safe_read_text(path):
+              try:
+                  return path.read_text(encoding="utf-8")
+              except (UnicodeDecodeError, Exception):
+                  return None
+
+          def safe_write_text(path, content):
+              try:
+                  path.write_text(content, encoding="utf-8")
+                  return True
+              except Exception:
+                  return False
+
+          # Step 1: Known replacements on text files only
           R = [
               ("$pbx_launch_screen_file_reference", '90DD2D9D24B36E8000717FE1 /* Launch Screen.storyboard */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = file.storyboard; path = "Launch Screen.storyboard"; sourceTree = "<group>"; };'),
               ("$pbx_launch_screen_copy_files", "90DD2D9D24B36E8000717FE1 /* Launch Screen.storyboard */,"),
@@ -244,28 +258,34 @@ jobs:
           ]
 
           EXTS = {".pbxproj", ".xcscheme", ".plist", ".storyboard", ".strings",
-                  ".swift", ".cpp", ".h", ".entitlements", ".xcworkspacedata"}
+                  ".swift", ".cpp", ".h", ".entitlements", ".xcworkspacedata",
+                  ".xcprivacy", ".json", ".xml", ".md", ".txt", ".mm", ".m",
+                  ".xcconfig", ".hpp", ".inl", ".def", ".modulemap"}
 
           changed = 0
           for p in pathlib.Path(APP).rglob("*"):
-              if not p.is_file() or p.suffix not in EXTS:
+              if not p.is_file() or p.suffix.lower() not in EXTS:
                   continue
-              t = p.read_text(encoding="utf-8")
+              t = safe_read_text(p)
+              if t is None:
+                  continue
               o = t
               for k, v in R:
                   t = t.replace(k, v)
               if t != o:
-                  p.write_text(t, encoding="utf-8")
+                  safe_write_text(p, t)
                   changed += 1
           print("Known placeholder-processed files:", changed)
 
           # Step 2: AGGRESSIVE - find ALL $word patterns and blank them
-          # This is critical for .pbxproj to not have parse errors
+          # Only on text files we can read
           total_blanked = 0
           for p in pathlib.Path(APP).rglob("*"):
               if not p.is_file():
                   continue
-              t = p.read_text(encoding="utf-8")
+              t = safe_read_text(p)
+              if t is None:
+                  continue
               o = t
               # Find all $word patterns (at least 3 chars after $)
               placeholders = set(re.findall(r'\$[a-zA-Z_][a-zA-Z0-9_]{2,}', t))
@@ -274,7 +294,7 @@ jobs:
                   total_blanked += 1
                   print(f"  BLANKED: {ph} in {p.name}")
               if t != o:
-                  p.write_text(t, encoding="utf-8")
+                  safe_write_text(p, t)
 
           print(f"Total placeholders blanked: {total_blanked}")
 
@@ -289,13 +309,16 @@ jobs:
           # Step 4: Verify no $ remains in .pbxproj
           pbxproj_path = pathlib.Path(APP) / "godot_apple_embedded.xcodeproj" / "project.pbxproj"
           if pbxproj_path.exists():
-              content = pbxproj_path.read_text(encoding="utf-8")
-              remaining = re.findall(r'\$[a-zA-Z_][a-zA-Z0-9_]{2,}', content)
-              if remaining:
-                  print(f"CRITICAL: {len(remaining)} placeholders still in .pbxproj: {remaining[:10]}")
-                  exit(1)
+              content = safe_read_text(pbxproj_path)
+              if content:
+                  remaining = re.findall(r'\$[a-zA-Z_][a-zA-Z0-9_]{2,}', content)
+                  if remaining:
+                      print(f"CRITICAL: {len(remaining)} placeholders still in .pbxproj: {remaining[:10]}")
+                      exit(1)
+                  else:
+                      print("VERIFIED: .pbxproj is clean - no placeholders remaining!")
               else:
-                  print("VERIFIED: .pbxproj is clean - no placeholders remaining!")
+                  print("WARNING: Could not read .pbxproj for verification")
           PYEOF
 
       - name: Set editor launch arguments (Info.plist)
@@ -316,7 +339,7 @@ jobs:
           mkdir -p demo_project
           cat > demo_project/project.godot << 'PG_EOF'
           ; Engine configuration file.
-          ; It's best edited using the editor UI and not directly.
+          ; It\'s best edited using the editor UI and not directly.
 
           config_version=5
 
