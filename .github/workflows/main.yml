@@ -51,8 +51,11 @@ jobs:
       - name: Patch engine (boot straight into editor)
         working-directory: godot
         run: |
-          cat > /tmp/ios_editor.patch << 'PATCH_EOF'
-          diff --git a/drivers/apple_embedded/main_utilities.mm b/drivers/apple_embedded/main_utilities.mm
+          set -e
+          python3 << 'PYEOF'
+          import subprocess, os
+
+          patch_content = """diff --git a/drivers/apple_embedded/main_utilities.mm b/drivers/apple_embedded/main_utilities.mm
           index 0000000..0000000 100644
           --- a/drivers/apple_embedded/main_utilities.mm
           +++ b/drivers/apple_embedded/main_utilities.mm
@@ -61,54 +64,66 @@ jobs:
            #include <cstdio>
 
           +static NSString *godot_documents_dir(void) {
-          +	return [NSSearchPathForDirectoriesInDomains(NSDocumentDirectory, NSUserDomainMask, YES) firstObject];
+          +\treturn [NSSearchPathForDirectoriesInDomains(NSDocumentDirectory, NSUserDomainMask, YES) firstObject];
           +}
           +
           +// Copies the project bundled inside the .app to the writable Documents
           +// directory on first launch, so the editor can open it (iOS sandbox hack).
           +static void godot_bootstrap_project(void) {
-          +	NSString *proj = [[[NSBundle mainBundle] infoDictionary] objectForKey:@"godot_editor_bootstrap_project"];
-          +	if (!proj || [proj length] == 0) {
-          +		return;
-          +	}
-          +	NSFileManager *fm = [NSFileManager defaultManager];
-          +	NSString *dst = [godot_documents_dir() stringByAppendingPathComponent:proj];
-          +	if ([fm fileExistsAtPath:dst]) {
-          +		return;
-          +	}
-          +	NSString *src = [[NSBundle mainBundle] pathForResource:proj ofType:nil];
-          +	if (src) {
-          +		[fm copyItemAtPath:src toPath:dst error:nil];
-          +	}
+          +\tNSString *proj = [[[NSBundle mainBundle] infoDictionary] objectForKey:@"godot_editor_bootstrap_project"];
+          +\tif (!proj || [proj length] == 0) {
+          +\t\treturn;
+          +\t}
+          +\tNSFileManager *fm = [NSFileManager defaultManager];
+          +\tNSString *dst = [godot_documents_dir() stringByAppendingPathComponent:proj];
+          +\tif ([fm fileExistsAtPath:dst]) {
+          +\t\treturn;
+          +\t}
+          +\tNSString *src = [[NSBundle mainBundle] pathForResource:proj ofType:nil];
+          +\tif (src) {
+          +\t\t[fm copyItemAtPath:src toPath:dst error:nil];
+          +\t}
           +}
           +
            void change_to_launch_dir(char **p_args) {
-          	size_t len = strlen(p_args[0]);
+          \tsize_t len = strlen(p_args[0]);
 
           @@ -61,7 +83,11 @@
-           		NSString *str = [arr objectAtIndex:i];
-           		if (!str) {
-           			continue;
-           		}
-          +		// Expand $$DOCS/ to the app\'s writable Documents directory.
-          +		if ([str hasPrefix:@"$$DOCS/"]) {
-          +			str = [godot_documents_dir() stringByAppendingPathComponent:[str substringFromIndex:7]];
-          +		}
-           		p_args[p_argc++] = (char *)[str cStringUsingEncoding:NSUTF8StringEncoding];
-           	}
+           \t\tNSString *str = [arr objectAtIndex:i];
+           \t\tif (!str) {
+           \t\t\tcontinue;
+           \t\t}
+          +\t\t// Expand $DOCS/ to the app's writable Documents directory.
+          +\t\tif ([str hasPrefix:@"$DOCS/"]) {
+          +\t\t\tstr = [godot_documents_dir() stringByAppendingPathComponent:[str substringFromIndex:6]];
+          +\t\t}
+           \t\tp_args[p_argc++] = (char *)[str cStringUsingEncoding:NSUTF8StringEncoding];
+           \t}
 
           @@ -72,6 +98,7 @@
            }
 
            int process_args(int p_argc, char **p_args, char **r_args) {
-          +	godot_bootstrap_project();
-           	for (int i = 0; i < p_argc; i++) {
-           		r_args[i] = p_args[i];
-           	}
-          PATCH_EOF
-          git apply --check /tmp/ios_editor.patch
-          git apply /tmp/ios_editor.patch
-          echo "Patch applied OK"
+          +\tgodot_bootstrap_project();
+           \tfor (int i = 0; i < p_argc; i++) {
+           \t\tr_args[i] = p_args[i];
+           \t}
+          """
+
+          with open("/tmp/ios_editor.patch", "w") as f:
+              f.write(patch_content)
+
+          # Convert \\t to actual tabs for the patch to apply correctly
+          with open("/tmp/ios_editor.patch", "r") as f:
+              content = f.read()
+          content = content.replace("\\t", "\t")
+          with open("/tmp/ios_editor.patch", "w") as f:
+              f.write(content)
+
+          subprocess.run(["git", "apply", "--check", "/tmp/ios_editor.patch"], check=True)
+          subprocess.run(["git", "apply", "/tmp/ios_editor.patch"], check=True)
+          print("Patch applied OK")
+          PYEOF
 
       - name: Compile Godot editor library (iOS arm64)
         working-directory: godot
