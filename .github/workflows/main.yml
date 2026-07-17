@@ -121,6 +121,7 @@ jobs:
           LIB="$(ls godot/bin/libgodot.ios.editor.arm64*.a | head -n1)"
           echo "Editor library: $LIB"
           cp -R "godot/misc/dist/apple_embedded_xcode" "$APP_DIR"
+          # অপ্রয়োজনীয় xcframework ফোল্ডার মুছে ফেলা
           rm -rf "$APP_DIR"/libgodot.visionos.debug.xcframework \
                  "$APP_DIR"/libgodot.visionos.release.xcframework \
                  "$APP_DIR"/libgodot_camera.ios.debug.xcframework \
@@ -160,8 +161,8 @@ jobs:
           XCF_EOF
           mv "$APP_DIR/data.pck" "$APP_DIR/godot.pck"
 
-      # ---- 6. পূর্ণাঙ্গ placeholder replacement + scheme fix -------------
-      - name: Replace all placeholders in all files
+      # ---- 6. স্মার্ট প্লেসহোল্ডার রিপ্লেস (পার্স-এবল pbxproj সহ) ---------
+      - name: Intelligently replace ALL placeholders (no corruption)
         run: |
           set -e
           python3 << 'PYEOF'
@@ -170,40 +171,56 @@ jobs:
 
           APP = "ios_app"
 
-          replacements = {
-              # PBX / বিল্ড সম্পর্কিত
-              "$pbx_launch_screen_file_reference":
-                  '90DD2D9D24B36E8000717FE1 /* Launch Screen.storyboard */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = file.storyboard; path = "Launch Screen.storyboard"; sourceTree = "<group>"; };',
-              "$pbx_launch_screen_copy_files":
-                  '90DD2D9D24B36E8000717FE1 /* Launch Screen.storyboard */,',
-              "$pbx_launch_screen_build_phase":
-                  '90DD2D9E24B36E8000717FE1 /* Launch Screen.storyboard in Resources */,',
-              "$pbx_launch_screen_build_reference":
-                  '90DD2D9E24B36E8000717FE1 /* Launch Screen.storyboard in Resources */ = {isa = PBXBuildFile; fileRef = 90DD2D9D24B36E8000717FE1 /* Launch Screen.storyboard */; };',
-              "$moltenvk_buildfile": "", "$moltenvk_fileref": "",
-              "$moltenvk_buildphase": "", "$moltenvk_buildgrp": "",
-              "$modules_buildfile": "", "$modules_fileref": "",
-              "$modules_buildphase": "", "$modules_buildgrp": "",
-              "$additional_pbx_files": "", "$additional_pbx_frameworks_build": "",
-              "$additional_pbx_frameworks_refs": "", "$additional_pbx_resources_refs": "",
-              "$additional_pbx_resources_build": "",
-              "$pbx_locale_file_reference": "", "$pbx_locale_build_reference": "",
-              "$pbx_embeded_frameworks": "",
-              "$os_deployment_target": "IPHONEOS_DEPLOYMENT_TARGET = 15.0;",
-              "$targeted_device_family": "1,2",
-              "$valid_archs": "arm64",
-              "$godot_archs": "arm64",
-              "$linker_flags": "",
-              "$sdkroot": "iphoneos",
-              "$team_id": "",
-              "$code_sign_identity_debug": "", "$code_sign_identity_release": "",
-              "$code_sign_style_debug": "Manual", "$code_sign_style_release": "Manual",
-              "$provisioning_profile_uuid_debug": "", "$provisioning_profile_uuid_release": "",
-              "$provisioning_profile_specifier_debug": "", "$provisioning_profile_specifier_release": "",
-              "$provisioning_profile_uuid": "",
-              "$priv_api_types": "", "$priv_collection": "", "$priv_tracking": "",
+          # ------------------ .pbxproj-এর জন্য বিশেষ ক্লিনার -----------------
+          def fix_pbxproj_placeholders(content):
+              # প্রথমে নির্দিষ্ট কয়েকটি placeholder replace করি (যা আমরা জানি)
+              known = {
+                  "$pbx_launch_screen_file_reference":
+                      '90DD2D9D24B36E8000717FE1 /* Launch Screen.storyboard */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = file.storyboard; path = "Launch Screen.storyboard"; sourceTree = "<group>"; };',
+                  "$pbx_launch_screen_copy_files":
+                      '90DD2D9D24B36E8000717FE1 /* Launch Screen.storyboard */,',
+                  "$pbx_launch_screen_build_phase":
+                      '90DD2D9E24B36E8000717FE1 /* Launch Screen.storyboard in Resources */,',
+                  "$pbx_launch_screen_build_reference":
+                      '90DD2D9E24B36E8000717FE1 /* Launch Screen.storyboard in Resources */ = {isa = PBXBuildFile; fileRef = 90DD2D9D24B36E8000717FE1 /* Launch Screen.storyboard */; };',
+              }
+              for k, v in known.items():
+                  content = content.replace(k, v)
 
-              # Plist / Interface
+              # এরপর সব $xxx প্যাটার্ন ধরে context অনুযায়ী replace করি
+              def replace_unknown(match):
+                  token = match.group(0)
+                  start = match.start()
+                  end = match.end()
+                  # যদি token-এর পরে ; বা , থাকে, পুরো জিনিসটা খালি করতে হবে নাকি শুধু token?
+                  # pbxproj-এ $xxx সাধারণত কোনো ভ্যালুর জায়গায় বসে, যেমন:
+                  # key = $xxx;   কিংবা $xxx, (array-র মধ্যে)
+                  # আমরা চারপাশ দেখে ঠিক করি
+                  before = content[max(0, start-10):start]
+                  after = content[end:end+10]
+
+                  # যদি "= $xxx;" হয় → key = "";  (খালি স্ট্রিং)
+                  if before.strip().endswith("=") and after.startswith(";"):
+                      return '""'
+                  # যদি "$xxx," হয় (array element) → মুছে দিই
+                  if after.startswith(","):
+                      return ''
+                  # যদি "$xxx;" আলাদা লাইনে → মুছে দিই
+                  if after.startswith(";"):
+                      return ''
+                  # নাহলে শুধু টোকেনটাকে খালি স্ট্রিং দিয়ে replace
+                  return '""'
+              content = re.sub(r'\$[a-zA-Z_][a-zA-Z0-9_]*', replace_unknown, content)
+
+              # ভুলে যাওয়া মিসিং সেমিকোলন বা কমা থাকলে ঠিক করি
+              # = "" ; → = "";
+              content = re.sub(r'= "" ;', '= "";', content)
+              # একাধিক কমা → একটি কমা
+              content = re.sub(r',\s*,', ',', content)
+              return content
+
+          # ------------------ অন্যান্য ফাইলের জন্য সাধারণ replace -------------
+          common_replacements = {
               "$plist_launch_screen_name": "<key>UILaunchStoryboardName</key>\n\t<string>Launch Screen</string>",
               "$launch_screen_image_mode": "center",
               "$launch_screen_background_color": 'red="0.10" green="0.11" blue="0.14" alpha="1"',
@@ -219,23 +236,30 @@ jobs:
                   "<string>UIInterfaceOrientationPortrait</string>\n\t\t<string>UIInterfaceOrientationPortraitUpsideDown</string>\n\t\t<string>UIInterfaceOrientationLandscapeLeft</string>\n\t\t<string>UIInterfaceOrientationLandscapeRight</string>",
               "$ipad_interface_orientations":
                   "<string>UIInterfaceOrientationPortrait</string>\n\t\t<string>UIInterfaceOrientationPortraitUpsideDown</string>\n\t\t<string>UIInterfaceOrientationLandscapeLeft</string>\n\t\t<string>UIInterfaceOrientationLandscapeRight</string>",
-              "$additional_plist_content": "",
-              "$entitlements_full": "",
-              "$cpp_code": "",
-
-              # বাইনারি / প্রোডাক্ট
-              "$binary": "Godot Editor",
-              "$name": "Godot Editor",
-              "$godot_path": "Godot Editor",
-              "$godot_name": "Godot Editor",
-              "$godot_binary": "Godot Editor",
-              "$default_build_config": "Release",
+              "$additional_plist_content": "", "$entitlements_full": "", "$cpp_code": "",
+              "$binary": "Godot Editor", "$name": "Godot Editor",
+              "$godot_path": "Godot Editor", "$godot_name": "Godot Editor",
+              "$godot_binary": "Godot Editor", "$default_build_config": "Release",
               "$export_method": "development",
               "$plist_bundle_identifier": "org.godotengine.ioseditor",
               "$plist_bundle_name": "Godot Editor",
               "$plist_bundle_display_name": "Godot Editor",
               "$plist_bundle_version": "4.7.1",
               "$plist_bundle_short_version": "4.7.1",
+              # অন্যান্য যেগুলো pbxproj-এও আসতে পারে কিন্তু আমরা pbxproj-এর জন্য আলাদা ক্লিনার দিচ্ছি
+              "$os_deployment_target": "IPHONEOS_DEPLOYMENT_TARGET = 15.0;",
+              "$targeted_device_family": "1,2",
+              "$valid_archs": "arm64",
+              "$godot_archs": "arm64",
+              "$linker_flags": "",
+              "$sdkroot": "iphoneos",
+              "$team_id": "",
+              "$code_sign_identity_debug": "", "$code_sign_identity_release": "",
+              "$code_sign_style_debug": "Manual", "$code_sign_style_release": "Manual",
+              "$provisioning_profile_uuid_debug": "", "$provisioning_profile_uuid_release": "",
+              "$provisioning_profile_specifier_debug": "", "$provisioning_profile_specifier_release": "",
+              "$provisioning_profile_uuid": "",
+              "$priv_api_types": "", "$priv_collection": "", "$priv_tracking": "",
           }
 
           EXTENSIONS = {".pbxproj", ".xcscheme", ".plist", ".storyboard",
@@ -252,20 +276,25 @@ jobs:
               try: path.write_text(text, encoding="utf-8"); return True
               except: return False
 
+          # পুরো প্রজেক্ট স্ক্যান করে ফাইল প্রসেসিং
           for f in Path(APP).rglob("*"):
               if not f.is_file() or f.suffix.lower() not in EXTENSIONS:
                   continue
               text = safe_read_text(f)
               if text is None: continue
-              orig = text
-              for k, v in replacements.items():
-                  text = text.replace(k, v)
-              # কোনো অজানা $xxx থাকলে ফাঁকা করে দেওয়া (শুধু .pbxproj-এর জন্য নিরাপদ পদ্ধতি)
+
               if f.suffix.lower() == ".pbxproj":
-                  text = re.sub(r'\$[a-zA-Z_][a-zA-Z0-9_]*', '""', text)
-              if text != orig:
-                  safe_write_text(f, text)
-          print("✅ All placeholders replaced in all files.")
+                  # pbxproj-এর জন্য স্পেশাল ফিক্স
+                  text = fix_pbxproj_placeholders(text)
+              else:
+                  # বাকি ফাইলের জন্য সাধারণ replace
+                  for k, v in common_replacements.items():
+                      text = text.replace(k, v)
+                  # plist বা xml ফাইলে $ চিহ্ন থাকলে তাকে খালি স্ট্রিং দিয়ে replace করা ভালো
+                  if f.suffix.lower() in {".plist", ".xml", ".entitlements", ".xcprivacy"}:
+                      text = re.sub(r'\$[a-zA-Z_][a-zA-Z0-9_]*', '', text)
+
+              safe_write_text(f, text)
 
           # Scheme fix: buildableName -> Godot Editor.app
           for scheme_path in Path(APP).rglob("*.xcscheme"):
@@ -273,9 +302,11 @@ jobs:
               scheme_text = re.sub(r'buildableName = "[^"]*"', 'buildableName = "Godot Editor.app"', scheme_text)
               scheme_path.write_text(scheme_text)
               print(f"✅ Scheme updated: {scheme_path}")
+
+          print("✅ All files processed successfully. pbxproj should be valid now.")
           PYEOF
 
-      # ---- 7. Info.plist আপডেট (Python, valid file-এর উপর) -------------
+      # ---- 7. Info.plist আপডেট (এডিটর লঞ্চ আর্গুমেন্ট) ------------------
       - name: Set editor launch arguments (Info.plist)
         run: |
           set -e
