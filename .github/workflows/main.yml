@@ -1,4 +1,4 @@
-=====================================================================
+# =====================================================================
 # Godot Editor for iOS — GitHub Actions workflow (IPA builder)
 #
 # iPad/iPhone-এ চালানোর জন্য Godot editor-এর unsigned IPA বিল্ড করে।
@@ -15,6 +15,10 @@
 name: Godot iOS Editor (IPA)
 
 on:
+  push:
+    branches:
+      - main
+      - master
   workflow_dispatch:
     inputs:
       godot_ref:
@@ -23,7 +27,8 @@ on:
         default: "4.7.1-stable"
 
 env:
-  GODOT_REF: ${{ inputs.godot_ref }}
+  # যখন push এর মাধ্যমে অটো রান হবে, তখন ইনপুট না থাকায় '4.7.1-stable' ডিফল্ট হিসেবে কাজ করবে
+  GODOT_REF: ${{ inputs.godot_ref || '4.7.1-stable' }}
   APP_DIR: ios_app
   BINARY: godot
 
