@@ -23,7 +23,7 @@ on:
       godot_ref:
         description: "Godot tag/branch (e.g. 4.2-stable, 4.3-stable, 4.4-stable)"
         required: true
-        default: "4.3-stable
+        default: "4.3-stable"
 
 env:
   GODOT_REF: ${{ inputs.godot_ref }}
