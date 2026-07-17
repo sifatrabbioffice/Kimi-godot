@@ -160,19 +160,18 @@ jobs:
           XCF_EOF
           mv "$APP_DIR/data.pck" "$APP_DIR/godot.pck"
 
-      # ---- 6. সম্পূর্ণ .pbxproj মেরামত (পার্স-এবল করা) -----------------
-      - name: Repair project.pbxproj to be fully valid
+      # ---- 6. পূর্ণাঙ্গ placeholder replacement + scheme fix -------------
+      - name: Replace all placeholders in all files
         run: |
           set -e
           python3 << 'PYEOF'
           import re, os
+          from pathlib import Path
 
-          pbx_path = "ios_app/godot_apple_embedded.xcodeproj/project.pbxproj"
-          with open(pbx_path, "r") as f:
-              content = f.read()
+          APP = "ios_app"
 
-          # আগের placeholder replace (যা আমরা চাই)
           replacements = {
+              # PBX / বিল্ড সম্পর্কিত
               "$pbx_launch_screen_file_reference":
                   '90DD2D9D24B36E8000717FE1 /* Launch Screen.storyboard */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = file.storyboard; path = "Launch Screen.storyboard"; sourceTree = "<group>"; };',
               "$pbx_launch_screen_copy_files":
@@ -203,6 +202,11 @@ jobs:
               "$provisioning_profile_specifier_debug": "", "$provisioning_profile_specifier_release": "",
               "$provisioning_profile_uuid": "",
               "$priv_api_types": "", "$priv_collection": "", "$priv_tracking": "",
+
+              # Plist / Interface
+              "$plist_launch_screen_name": "<key>UILaunchStoryboardName</key>\n\t<string>Launch Screen</string>",
+              "$launch_screen_image_mode": "center",
+              "$launch_screen_background_color": 'red="0.10" green="0.11" blue="0.14" alpha="1"',
               "$bundle_identifier": "org.godotengine.ioseditor",
               "$short_version": "4.7.1", "$version": "4.7.1",
               "$signature": "????",
@@ -218,12 +222,14 @@ jobs:
               "$additional_plist_content": "",
               "$entitlements_full": "",
               "$cpp_code": "",
-              "$default_build_config": "Release",
+
+              # বাইনারি / প্রোডাক্ট
               "$binary": "Godot Editor",
               "$name": "Godot Editor",
               "$godot_path": "Godot Editor",
               "$godot_name": "Godot Editor",
               "$godot_binary": "Godot Editor",
+              "$default_build_config": "Release",
               "$export_method": "development",
               "$plist_bundle_identifier": "org.godotengine.ioseditor",
               "$plist_bundle_name": "Godot Editor",
@@ -231,46 +237,48 @@ jobs:
               "$plist_bundle_version": "4.7.1",
               "$plist_bundle_short_version": "4.7.1",
           }
-          for k, v in replacements.items():
-              content = content.replace(k, v)
 
-          # ---- এখনো কোনো $xxx থাকলে সেটাকে CONTEXT অনুযায়ী ঠিক করা -----
-          def fix_unknown_placeholder(match):
-              token = match.group(0)
-              # string বা path-এর ভিতরে থাকলে খালি স্ট্রিং
-              # নাহলে ভ্যালু হিসেবে 0 বা {} ব্যবহার করি
-              # সাধারণ heuristic: = $xxx; -> = "";
-              # কিন্তু regex-এ ক্যাপচার করা যায় না, তাই আমরা পুরো ফাইলে আবার রিপ্লেস করব
-              return '""'  # সবচেয়ে নিরাপদ
+          EXTENSIONS = {".pbxproj", ".xcscheme", ".plist", ".storyboard",
+                        ".strings", ".swift", ".cpp", ".h", ".entitlements",
+                        ".xcworkspacedata", ".xcprivacy", ".json", ".xml",
+                        ".md", ".txt", ".mm", ".m", ".xcconfig", ".hpp",
+                        ".inl", ".def", ".modulemap"}
 
-          content = re.sub(r'\$[a-zA-Z_][a-zA-Z0-9_]*', '""', content)
-          # অনেক সময় "" এর পরে ; লাগবে, সেটা আমরা সাধারণ replace দিয়ে ঠিক করি
-          content = content.replace('"";', '"";')  # কোন পরিবর্তন নয়
-          # তবে = "" ; হয়ে গেলে সেটা ঠিক করতে হবে
-          content = re.sub(r'= "" ;', '= "";', content)
+          def safe_read_text(path):
+              try: return path.read_text(encoding="utf-8")
+              except: return None
 
-          with open(pbx_path, "w") as f:
-              f.write(content)
+          def safe_write_text(path, text):
+              try: path.write_text(text, encoding="utf-8"); return True
+              except: return False
 
-          print("✅ project.pbxproj repaired (all placeholders resolved).")
+          for f in Path(APP).rglob("*"):
+              if not f.is_file() or f.suffix.lower() not in EXTENSIONS:
+                  continue
+              text = safe_read_text(f)
+              if text is None: continue
+              orig = text
+              for k, v in replacements.items():
+                  text = text.replace(k, v)
+              # কোনো অজানা $xxx থাকলে ফাঁকা করে দেওয়া (শুধু .pbxproj-এর জন্য নিরাপদ পদ্ধতি)
+              if f.suffix.lower() == ".pbxproj":
+                  text = re.sub(r'\$[a-zA-Z_][a-zA-Z0-9_]*', '""', text)
+              if text != orig:
+                  safe_write_text(f, text)
+          print("✅ All placeholders replaced in all files.")
+
+          # Scheme fix: buildableName -> Godot Editor.app
+          for scheme_path in Path(APP).rglob("*.xcscheme"):
+              scheme_text = scheme_path.read_text()
+              scheme_text = re.sub(r'buildableName = "[^"]*"', 'buildableName = "Godot Editor.app"', scheme_text)
+              scheme_path.write_text(scheme_text)
+              print(f"✅ Scheme updated: {scheme_path}")
           PYEOF
 
-      # ---- 7. Scheme আপডেট (product name) --------------------------------
-      - name: Update scheme with correct product name
-        run: |
-          set -e
-          SCHEME="$APP_DIR/godot_apple_embedded.xcodeproj/xcshareddata/xcschemes/godot_apple_embedded.xcscheme"
-          if [ -f "$SCHEME" ]; then
-            sed -i '' 's/buildableName = "[^"]*"/buildableName = "Godot Editor.app"/' "$SCHEME"
-            echo "Scheme updated."
-          else
-            echo "⚠️  No .xcscheme found"
-            find "$APP_DIR" -name "*.xcscheme"
-          fi
-
-      # ---- 8. Info.plist আপডেট (Python) ----------------------------------
+      # ---- 7. Info.plist আপডেট (Python, valid file-এর উপর) -------------
       - name: Set editor launch arguments (Info.plist)
         run: |
+          set -e
           python3 << 'PYEOF'
           import plistlib
 
@@ -286,7 +294,7 @@ jobs:
           print("✅ Info.plist updated.")
           PYEOF
 
-      # ---- 9. অ্যাপ আইকন -------------------------------------------------
+      # ---- 8. অ্যাপ আইকন -------------------------------------------------
       - name: Generate app icon
         run: |
           python3 << 'PYEOF'
@@ -302,7 +310,7 @@ jobs:
           json.dump({"images":[{"filename":"icon_1024.png","idiom":"universal","platform":"ios","size":"1024x1024"}],"info":{"author":"xcode","version":1}}, open(os.path.join(base, "Contents.json"), "w"))
           PYEOF
 
-      # ---- 10. ডেমো প্রজেক্ট ---------------------------------------------
+      # ---- 9. ডেমো প্রজেক্ট ---------------------------------------------
       - name: Create bundled demo project
         run: |
           mkdir -p demo_project
@@ -325,7 +333,7 @@ jobs:
           text = "Godot iOS Editor is working!"
           TSCN_EOF
 
-      # ---- 11. Xcode বিল্ড -----------------------------------------------
+      # ---- 10. Xcode বিল্ড -----------------------------------------------
       - name: Build .app with Xcode (unsigned)
         run: |
           set -e
@@ -347,7 +355,7 @@ jobs:
             build
           ls -lh "$APP_DIR/dd/Build/Products/Release-iphoneos/"
 
-      # ---- 12. IPA প্যাকেজ -----------------------------------------------
+      # ---- 11. IPA প্যাকেজ -----------------------------------------------
       - name: Package IPA
         run: |
           set -e
@@ -360,7 +368,7 @@ jobs:
           zip -qry "$IPA" Payload
           ls -lh "$IPA"
 
-      # ---- 13. আর্টিফ্যাক্ট ----------------------------------------------
+      # ---- 12. আর্টিফ্যাক্ট ----------------------------------------------
       - name: Upload IPA artifact
         uses: actions/upload-artifact@v4
         with:
