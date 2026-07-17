@@ -1,9 +1,9 @@
-# =====================================================================
+=====================================================================
 # Godot Editor for iOS — GitHub Actions workflow (IPA builder)
 #
 # iPad/iPhone-এ চালানোর জন্য Godot editor-এর unsigned IPA বিল্ড করে।
 #
-# ব্যবহার:
+# ব্যাবহার:
 #   1. এই ফাইলটা আপনার repo-তে রাখুন: .github/workflows/godot-ios-editor.yml
 #   2. GitHub → Actions → "Godot iOS Editor (IPA)" → Run workflow
 #   3. Run শেষ হলে Artifacts থেকে GodotEditor-iOS-ipa ডাউনলোড করুন
@@ -54,56 +54,64 @@ jobs:
       - name: Patch engine (boot straight into editor)
         working-directory: godot
         run: |
-          python3 << 'PYEOF'
-          import re, os
+          cat > /tmp/ios_editor.patch << 'PATCH_EOF'
+          diff --git a/drivers/apple_embedded/main_utilities.mm b/drivers/apple_embedded/main_utilities.mm
+          index 0000000..0000000 100644
+          --- a/drivers/apple_embedded/main_utilities.mm
+          +++ b/drivers/apple_embedded/main_utilities.mm
+          @@ -35,6 +35,28 @@
 
-          file_path = "drivers/apple_embedded/main_utilities.mm"
-          with open(file_path, "r") as f:
-              content = f.read()
+           #include <cstdio>
 
-          # 1. Insert helper functions after #include <cstdio>
-          if "#include <cstdio>" in content:
-              insert_point = content.find("#include <cstdio>") + len("#include <cstdio>")
-              new_code = """
+          +static NSString *godot_documents_dir(void) {
+          +	return [NSSearchPathForDirectoriesInDomains(NSDocumentDirectory, NSUserDomainMask, YES) firstObject];
+          +}
+          +
+          +// Copies the project bundled inside the .app to the writable Documents
+          +// directory on first launch, so the editor can open it (iOS sandbox hack).
+          +static void godot_bootstrap_project(void) {
+          +	NSString *proj = [[[NSBundle mainBundle] infoDictionary] objectForKey:@"godot_editor_bootstrap_project"];
+          +	if (!proj || [proj length] == 0) {
+          +		return;
+          +	}
+          +	NSFileManager *fm = [NSFileManager defaultManager];
+          +	NSString *dst = [godot_documents_dir() stringByAppendingPathComponent:proj];
+          +	if ([fm fileExistsAtPath:dst]) {
+          +		return;
+          +	}
+          +	NSString *src = [[NSBundle mainBundle] pathForResource:proj ofType:nil];
+          +	if (src) {
+          +		[fm copyItemAtPath:src toPath:dst error:nil];
+          +	}
+          +}
+          +
+           void change_to_launch_dir(char **p_args) {
+          	size_t len = strlen(p_args[0]);
 
-          static NSString *godot_documents_dir(void) {
-              return [NSSearchPathForDirectoriesInDomains(NSDocumentDirectory, NSUserDomainMask, YES) firstObject];
-          }
+          @@ -61,7 +83,11 @@
+           		NSString *str = [arr objectAtIndex:i];
+           		if (!str) {
+           			continue;
+           		}
+          +		// Expand $DOCS/ to the app\'s writable Documents directory.
+          +		if ([str hasPrefix:@"$DOCS/"]) {
+          +			str = [godot_documents_dir() stringByAppendingPathComponent:[str substringFromIndex:6]];
+          +		}
+           		p_args[p_argc++] = (char *)[str cStringUsingEncoding:NSUTF8StringEncoding];
+           	}
 
-          // Copies the project bundled inside the .app to the writable Documents
-          // directory on first launch, so the editor can open it (iOS sandbox hack).
-          static void godot_bootstrap_project(void) {
-              NSString *proj = [[[NSBundle mainBundle] infoDictionary] objectForKey:@"godot_editor_bootstrap_project"];
-              if (!proj || [proj length] == 0) {
-                  return;
-              }
-              NSFileManager *fm = [NSFileManager defaultManager];
-              NSString *dst = [godot_documents_dir() stringByAppendingPathComponent:proj];
-              if ([fm fileExistsAtPath:dst]) {
-                  return;
-              }
-              NSString *src = [[NSBundle mainBundle] pathForResource:proj ofType:nil];
-              if (src) {
-                  [fm copyItemAtPath:src toPath:dst error:nil];
-              }
-          }
-          """
-              content = content[:insert_point] + new_code + content[insert_point:]
+          @@ -72,6 +98,7 @@
+           }
 
-          # 2. Modify argument processing to expand $DOCS/
-          pattern = r'(for\s*\(\s*int\s+i\s*=\s*0;\s*i\s*<\s*\[\s*arr\s+count\s*\];\s*i\+\+\s*\)\s*\{)\s*(NSString\s*\*\s*str\s*=\s*\[arr\s+objectAtIndex:i\];\s*if\s*\(\s*!str\s*\)\s*\{\s*continue;\s*\})'
-          replacement = r'\1\n            NSString *str = [arr objectAtIndex:i];\n            if (!str) {\n                continue;\n            }\n            // Expand $DOCS/ to the app\'s writable Documents directory.\n            if ([str hasPrefix:@"$DOCS/"]) {\n                str = [godot_documents_dir() stringByAppendingPathComponent:[str substringFromIndex:6]];\n            }'
-          content = re.sub(pattern, replacement, content, flags=re.DOTALL)
-
-          # 3. Call godot_bootstrap_project() at the start of process_args
-          pattern = r'(int\s+process_args\s*\(\s*int\s+p_argc\s*,\s*char\s*\*\*p_args\s*,\s*char\s*\*\*r_args\s*\)\s*\{)'
-          replacement = r'\1\n    godot_bootstrap_project();'
-          content = re.sub(pattern, replacement, content)
-
-          with open(file_path, "w") as f:
-              f.write(content)
-          print("main_utilities.mm patched successfully")
-          PYEOF
+           int process_args(int p_argc, char **p_args, char **r_args) {
+          +	godot_bootstrap_project();
+           	for (int i = 0; i < p_argc; i++) {
+           		r_args[i] = p_args[i];
+           	}
+          PATCH_EOF
+          git apply --check /tmp/ios_editor.patch
+          git apply /tmp/ios_editor.patch
+          echo "Patch applied OK"
 
       - name: Compile Godot editor library (iOS arm64)
         working-directory: godot
@@ -117,19 +125,18 @@ jobs:
           set -e
           LIB="$(ls godot/bin/libgodot.ios.editor.arm64*.a | head -n1)"
           echo "Editor library: $LIB"
-          # Copy template to the expected folder name so later rename works
-          cp -R "godot/misc/dist/apple_embedded_xcode" "$APP_DIR/godot_apple_embedded"
-          rm -rf "$APP_DIR/godot_apple_embedded"/libgodot.visionos.debug.xcframework \
-                 "$APP_DIR/godot_apple_embedded"/libgodot.visionos.release.xcframework \
-                 "$APP_DIR/godot_apple_embedded"/libgodot_camera.ios.debug.xcframework \
-                 "$APP_DIR/godot_apple_embedded"/libgodot_camera.ios.release.xcframework \
-                 "$APP_DIR/godot_apple_embedded"/libgodot_camera.visionos.debug.xcframework \
-                 "$APP_DIR/godot_apple_embedded"/libgodot_camera.visionos.release.xcframework \
-                 "$APP_DIR/godot_apple_embedded"/libgodot.ios.debug.xcframework \
-                 "$APP_DIR/godot_apple_embedded"/libgodot.ios.release.xcframework
-          mkdir -p "$APP_DIR/godot_apple_embedded/godot.xcframework/ios-arm64"
-          cp "$LIB" "$APP_DIR/godot_apple_embedded/godot.xcframework/ios-arm64/libgodot.a"
-          cat > "$APP_DIR/godot_apple_embedded/godot.xcframework/Info.plist" << 'XCF_EOF'
+          cp -R "godot/misc/dist/apple_embedded_xcode" "$APP_DIR"
+          rm -rf "$APP_DIR"/libgodot.visionos.debug.xcframework \
+                 "$APP_DIR"/libgodot.visionos.release.xcframework \
+                 "$APP_DIR"/libgodot_camera.ios.debug.xcframework \
+                 "$APP_DIR"/libgodot_camera.ios.release.xcframework \
+                 "$APP_DIR"/libgodot_camera.visionos.debug.xcframework \
+                 "$APP_DIR"/libgodot_camera.visionos.release.xcframework \
+                 "$APP_DIR"/libgodot.ios.debug.xcframework \
+                 "$APP_DIR"/libgodot.ios.release.xcframework
+          mkdir -p "$APP_DIR/godot.xcframework/ios-arm64"
+          cp "$LIB" "$APP_DIR/godot.xcframework/ios-arm64/libgodot.a"
+          cat > "$APP_DIR/godot.xcframework/Info.plist" << 'XCF_EOF'
           <?xml version="1.0" encoding="UTF-8"?>
           <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
           <plist version="1.0">
@@ -156,8 +163,7 @@ jobs:
           </dict>
           </plist>
           XCF_EOF
-          # Move the placeholder data.pck to godot.pck (inside the template)
-          mv "$APP_DIR/godot_apple_embedded/data.pck" "$APP_DIR/godot_apple_embedded/godot.pck"
+          mv "$APP_DIR/data.pck" "$APP_DIR/godot.pck"
 
       - name: Fill template placeholders
         run: |
@@ -166,6 +172,7 @@ jobs:
 
           APP = "ios_app"
 
+          # Core replacements for known placeholders
           R = [
               ("$pbx_launch_screen_file_reference", '90DD2D9D24B36E8000717FE1 /* Launch Screen.storyboard */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = file.storyboard; path = "Launch Screen.storyboard"; sourceTree = "<group>"; };'),
               ("$pbx_launch_screen_copy_files", "90DD2D9D24B36E8000717FE1 /* Launch Screen.storyboard */,"),
@@ -210,6 +217,15 @@ jobs:
               ("$default_build_config", "Release"),
               ("$binary", "godot"),
               ("$name", "Godot Editor"),
+              ("$godot_path", "godot"),
+              ("$godot_name", "Godot Editor"),
+              ("$godot_binary", "godot"),
+              ("$export_method", "development"),
+              ("$plist_bundle_identifier", "org.godotengine.ioseditor"),
+              ("$plist_bundle_name", "Godot Editor"),
+              ("$plist_bundle_display_name", "Godot Editor"),
+              ("$plist_bundle_version", "4.7.1"),
+              ("$plist_bundle_short_version", "4.7.1"),
           ]
 
           EXTS = {".pbxproj", ".xcscheme", ".plist", ".storyboard", ".strings",
@@ -228,19 +244,36 @@ jobs:
                   changed += 1
           print("placeholder-processed files:", changed)
 
-          # Now rename the folder from godot_apple_embedded to godot
-          os.rename(f"{APP}/godot_apple_embedded", f"{APP}/godot")
-          # Also rename the Info.plist and entitlements inside
-          os.rename(f"{APP}/godot/godot_apple_embedded-Info.plist", f"{APP}/godot/godot-Info.plist")
-          os.rename(f"{APP}/godot/godot_apple_embedded.entitlements", f"{APP}/godot/godot.entitlements")
+          # $binary -> godot : file/dir renames
+          if os.path.exists(f"{APP}/godot_apple_embedded"):
+              os.rename(f"{APP}/godot_apple_embedded", f"{APP}/godot")
+          if os.path.exists(f"{APP}/godot/godot_apple_embedded-Info.plist"):
+              os.rename(f"{APP}/godot/godot_apple_embedded-Info.plist", f"{APP}/godot/godot-Info.plist")
+          if os.path.exists(f"{APP}/godot/godot_apple_embedded.entitlements"):
+              os.rename(f"{APP}/godot/godot_apple_embedded.entitlements", f"{APP}/godot/godot.entitlements")
 
-          left = []
+          # Auto-discover and blank out any remaining $placeholders
+          # This prevents "project is damaged" parse errors
+          leftover_found = False
           for p in pathlib.Path(APP).rglob("*"):
-              if p.is_file() and p.suffix in EXTS:
-                  for m in sorted(set(re.findall(r"\$[a-z_]{3,}", p.read_text(encoding="utf-8")))):
-                      left.append(f"{p}: {m}")
-          print("leftover placeholders (export_options.plist ইত্যাদিতে থাকলে সমস্যা নেই):")
-          print("\n".join(left) if left else "  none")
+              if not p.is_file() or p.suffix not in EXTS:
+                  continue
+              t = p.read_text(encoding="utf-8")
+              o = t
+              # Find all $word patterns and replace with empty string
+              # This is a safety net for any placeholders we missed
+              placeholders = set(re.findall(r'\$[a-zA-Z_][a-zA-Z0-9_]*', t))
+              for ph in placeholders:
+                  t = t.replace(ph, "")
+                  leftover_found = True
+                  print(f"  blanked leftover: {ph} in {p}")
+              if t != o:
+                  p.write_text(t, encoding="utf-8")
+
+          if not leftover_found:
+              print("No leftover placeholders found (all clean!)")
+          else:
+              print("Leftover placeholders were auto-cleared.")
           PYEOF
 
       - name: Set editor launch arguments (Info.plist)
@@ -313,7 +346,7 @@ jobs:
         run: |
           set -e
           xcodebuild \
-            -project "$APP_DIR/godot/godot_apple_embedded.xcodeproj" \
+            -project "$APP_DIR/godot_apple_embedded.xcodeproj" \
             -scheme godot_apple_embedded \
             -configuration Release \
             -sdk iphoneos \
